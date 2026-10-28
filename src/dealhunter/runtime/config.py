@@ -1,11 +1,11 @@
-"""Configuracao da aplicacao.
+"""Configuração da aplicação.
 
-Precedencia (do mais forte para o mais fraco)::
+Precedência (do mais forte para o mais fraco)::
 
-    flags da CLI  >  variaveis DEALHUNTER_*  >  --config explicito
-                  >  ./.dealhunter.toml (projeto)  >  config do usuario  >  defaults
+    flags da CLI  >  variáveis DEALHUNTER_*  >  --config explícito
+                  >  ./.dealhunter.toml (projeto)  >  config do usuário  >  defaults
 
-Segredos (tokens, senhas) **nao** moram no TOML: o arquivo guarda apenas o nome
+Segredos (tokens, senhas) **não** moram no TOML: o arquivo guarda apenas o nome
 da credencial no keyring ou da variavel de ambiente correspondente.
 """
 
@@ -30,7 +30,7 @@ ENV_PREFIX = "DEALHUNTER_"
 
 
 class ConfigError(RuntimeError):
-    """Erro de configuracao com mensagem amigavel para o usuario."""
+    """Erro de configuração com mensagem amigavel para o usuário."""
 
 
 # --------------------------------------------------------------------- secoes
@@ -69,19 +69,27 @@ class AISettings(BaseModel):
 class NotificationSettings(BaseModel):
     channels: list[str] = Field(default_factory=lambda: ["console"])
     email_from: str | None = None
+    email_to: str | None = None
+    smtp_host: str | None = None
+    smtp_port: int = Field(default=587, ge=1, le=65535)
+    smtp_user: str | None = None
+    smtp_password_env: str = "DEALHUNTER_SMTP_PASSWORD"
+    use_starttls: bool = True
     whatsapp_template: str | None = None
 
 
 class SourcesSettings(BaseModel):
-    enabled: list[str] = Field(default_factory=list)
+    enabled: list[str] = Field(default_factory=lambda: ["mercadolivre"])
     disabled: list[str] = Field(default_factory=list)
+    feed_urls: list[str] = Field(default_factory=list)
+    mercadolivre_token_env: str = "DEALHUNTER_MELI_ACCESS_TOKEN"
     user_agent: str = "DealHunter/0.1 (+https://github.com/dealhunter)"
     respect_robots: bool = True
     requests_per_minute: int = Field(default=30, ge=1, le=600)
 
 
 class AppConfig(BaseSettings):
-    """Configuracao efetiva, ja validada."""
+    """Configuração efetiva, ja validada."""
 
     model_config = SettingsConfigDict(
         env_prefix=ENV_PREFIX,
@@ -120,7 +128,7 @@ def _read_toml(path: Path) -> dict[str, Any]:
     try:
         raw = path.read_bytes()
     except OSError as exc:
-        raise ConfigError(f"nao foi possivel ler {path}: {exc}") from exc
+        raise ConfigError(f"não foi possível ler {path}: {exc}") from exc
 
     try:
         # utf-8-sig: editores do Windows (Notepad, Set-Content) gravam BOM, que
@@ -139,7 +147,7 @@ def _format_validation_error(exc: ValidationError) -> str:
     for error in exc.errors():
         location = ".".join(str(part) for part in error["loc"]) or "(raiz)"
         lines.append(f"  - {location}: {error['msg']}")
-    return "configuracao invalida:\n" + "\n".join(lines)
+    return "configuração inválida:\n" + "\n".join(lines)
 
 
 # --------------------------------------------------------------------- carga
@@ -150,7 +158,7 @@ def load_config(
     project_dir: Path | None = None,
     environ: dict[str, str] | None = None,
 ) -> ConfigLoadResult:
-    """Carrega defaults -> arquivos TOML -> variaveis de ambiente -> validacao."""
+    """Carrega defaults -> arquivos TOML -> variáveis de ambiente -> validação."""
     environ = dict(os.environ if environ is None else environ)
     files_read: list[Path] = []
     data: dict[str, Any] = {}
@@ -158,7 +166,7 @@ def load_config(
     user_config = paths.config_file
     if explicit_path is not None:
         if not explicit_path.exists():
-            raise ConfigError(f"arquivo de configuracao nao encontrado: {explicit_path}")
+            raise ConfigError(f"arquivo de configuração não encontrado: {explicit_path}")
         candidates = [explicit_path]
     else:
         candidates = []
@@ -173,9 +181,9 @@ def load_config(
         data = _deep_merge(data, _read_toml(candidate))
         files_read.append(candidate)
 
-    # Ordem explicita: defaults (do modelo) -> arquivos -> variaveis de ambiente.
-    # Nao usamos a leitura automatica de env do BaseSettings para manter o
-    # comportamento deterministico e testavel com um mapping injetado.
+    # Ordem explicita: defaults (do modelo) -> arquivos -> variáveis de ambiente.
+    # Não usamos a leitura automatica de env do BaseSettings para manter o
+    # comportamento determinístico e testavel com um mapping injetado.
     try:
         config = AppConfig.model_validate(data)
         config = _apply_env_overrides(config, environ)
@@ -220,7 +228,7 @@ def _apply_env_overrides(config: AppConfig, environ: dict[str, str]) -> AppConfi
 
 
 def dump_config_toml(config: AppConfig) -> str:
-    """Serializa a configuracao efetiva (sem segredos) como TOML."""
+    """Serializa a configuração efetiva (sem segredos) como TOML."""
     import tomli_w
 
     def strip_none(value: Any) -> Any:

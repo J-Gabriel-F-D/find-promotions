@@ -1,4 +1,4 @@
-"""Pacote de runtime (configuracao, logging, container, jobs)."""
+"""Pacote de runtime (configuração, logging, container, jobs)."""
 
 from __future__ import annotations
 

@@ -31,9 +31,9 @@ def migrate(ctx: typer.Context) -> None:
         return
 
     if result.changed:
-        rt.console.print(f"[green]Migracoes aplicadas:[/green] {', '.join(result.applied)}")
+        rt.console.print(f"[green]Migrações aplicadas:[/green] {', '.join(result.applied)}")
     else:
-        rt.console.print("[dim]Nenhuma migracao pendente.[/dim]")
+        rt.console.print("[dim]Nenhuma migração pendente.[/dim]")
     rt.console.print(f"Schema atual: [bold]{version}[/bold]")
     rt.console.print(f"Banco: {rt.database.path}")
 

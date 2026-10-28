@@ -46,12 +46,12 @@ def test_status_json_tem_envelope_estavel(tmp_path: Path) -> None:
 def test_db_migrate_e_status(tmp_path: Path) -> None:
     migrated = _invoke(tmp_path, ["--json", "db", "migrate"])
     assert migrated.exit_code == 0, migrated.output
-    assert json.loads(migrated.output)["schema_version"] == "0001_init"
+    assert json.loads(migrated.output)["schema_version"] == "0002_mvp"
 
     status = _invoke(tmp_path, ["--json", "status"])
     payload = json.loads(status.output)
     assert payload["database"]["initialized"] is True
-    assert payload["database"]["schema_version"] == "0001_init"
+    assert payload["database"]["schema_version"] == "0002_mvp"
     assert payload["database"]["integrity_ok"] is True
 
 
@@ -76,4 +76,4 @@ def test_config_invalida_retorna_codigo_proprio(tmp_path: Path) -> None:
 
     result = runner.invoke(app, ["status"], env={"DEALHUNTER_HOME": str(home)})
     assert result.exit_code == 6
-    assert "configuracao invalida" in result.output.lower()
+    assert "configuração inválida" in result.output.lower()

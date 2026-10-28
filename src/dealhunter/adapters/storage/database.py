@@ -1,6 +1,6 @@
-"""Bootstrap do SQLite e executor de migracoes.
+"""Bootstrap do SQLite e executor de migrações.
 
-Por que SQLite: a aplicacao roda na maquina do usuario, sem servidor e sem
+Por que SQLite: a aplicação roda na maquina do usuário, sem servidor e sem
 Docker. WAL + ``busy_timeout`` atendem com folga o volume típico (dezenas de
 milhares de ofertas). A camada de repositorio isola o SQL, permitindo migrar
 para PostgreSQL sem tocar no dominio.
@@ -8,7 +8,7 @@ para PostgreSQL sem tocar no dominio.
 Convencoes
 ----------
 * Dinheiro em **centavos inteiros**; datas em ISO-8601 UTC (texto).
-* Migracoes sao arquivos ``NNNN_nome.sql`` aplicados em ordem e registrados em
+* Migrações são arquivos ``NNNN_nome.sql`` aplicados em ordem e registrados em
   ``schema_migration``. Elas devem ser idempotentes (``IF NOT EXISTS``), porque
   ``executescript`` do SQLite faz commit implicito antes de executar.
 """
@@ -65,10 +65,10 @@ class Database:
                 total += sidecar.stat().st_size
         return total
 
-    # ------------------------------------------------------------------ conexao
+    # ------------------------------------------------------------------ conexão
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:
-        """Abre conexao configurada; faz commit no sucesso e rollback no erro."""
+        """Abre conexão configurada; faz commit no sucesso e rollback no erro."""
         self._path.parent.mkdir(parents=True, exist_ok=True)
         connection = sqlite3.connect(self._path, timeout=5.0)
         connection.row_factory = sqlite3.Row
@@ -85,9 +85,9 @@ class Database:
         finally:
             connection.close()
 
-    # ------------------------------------------------------------------ migracoes
+    # ------------------------------------------------------------------ migrações
     def migrate(self) -> MigrationResult:
-        """Aplica migracoes pendentes em ordem lexicografica."""
+        """Aplica migrações pendentes em ordem lexicografica."""
         applied: list[str] = []
         with self.connect() as connection:
             connection.execute(SCHEMA_TABLE_SQL)

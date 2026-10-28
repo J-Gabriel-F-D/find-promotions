@@ -1,6 +1,6 @@
-"""Composition root: monta configuracao, logging, console e persistencia.
+"""Composition root: monta configuração, logging, console e persistencia.
 
-Nenhuma regra de negocio mora aqui. O container apenas liga as pecas e expoe
+Nenhuma regra de negócio mora aqui. O container apenas liga as pecas e expõe
 um ``RuntimeContext`` imutavel para os comandos da CLI.
 """
 
@@ -15,6 +15,7 @@ from rich.console import Console
 
 from dealhunter import __version__
 from dealhunter.adapters.storage.database import Database
+from dealhunter.cli.ui.glyphs import Glyphs, glyphs_for
 from dealhunter.domain.ports.clock import Clock, SystemClock
 from dealhunter.runtime.config import AppConfig, ConfigLoadResult, load_config
 from dealhunter.runtime.logging import configure_logging
@@ -42,6 +43,11 @@ class RuntimeContext:
     console: Console
     error_console: Console
     database: Database
+    glyphs: Glyphs
+
+    @property
+    def unicode_enabled(self) -> bool:
+        return self.config.general.unicode and not self.flags.no_unicode
 
     @property
     def json_output(self) -> bool:
@@ -84,7 +90,7 @@ def build_runtime(
     stdout: TextIO | None = None,
     stderr: TextIO | None = None,
 ) -> RuntimeContext:
-    """Monta o contexto de execucao usado por todos os comandos."""
+    """Monta o contexto de execução usado por todos os comandos."""
     flags = flags or RuntimeFlags()
     paths = resolve_paths(environ)
     config_load = load_config(
@@ -128,11 +134,12 @@ def build_runtime(
         console=console,
         error_console=error_console,
         database=Database(paths.database_file),
+        glyphs=glyphs_for(config.general.unicode and not flags.no_unicode),
     )
 
 
 def version_info() -> dict[str, str]:
-    """Metadados de versao exibidos em ``--version`` e ``status --json``."""
+    """Metadados de versão exibidos em ``--version`` e ``status --json``."""
     import platform
 
     return {

@@ -1,4 +1,4 @@
-"""Codigos de saida estaveis (contrato para scripts/automacao)."""
+"""Códigos de saída estáveis (contrato para scripts/automação)."""
 
 from __future__ import annotations
 

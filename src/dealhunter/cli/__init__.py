@@ -1,4 +1,4 @@
-"""Camada de apresentacao (CLI). Nao contem regra de negocio."""
+"""Camada de apresentacao (CLI). Não contem regra de negócio."""
 
 from __future__ import annotations
 

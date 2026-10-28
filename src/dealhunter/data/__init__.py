@@ -1,4 +1,4 @@
-"""Recursos empacotados com a aplicacao (migracoes, prompts, manifesto de fontes)."""
+"""Recursos empacotados com a aplicação (migrações, prompts, manifesto de fontes)."""
 
 from __future__ import annotations
 

@@ -22,7 +22,7 @@ ENV_HOME = "DEALHUNTER_HOME"
 
 @dataclass(frozen=True, slots=True)
 class AppPaths:
-    """Diretorios e arquivos usados pela aplicacao."""
+    """Diretorios e arquivos usados pela aplicação."""
 
     config_dir: Path
     data_dir: Path

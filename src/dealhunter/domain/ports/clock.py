@@ -1,6 +1,6 @@
 """Porta de tempo.
 
-Tempo e sempre UTC internamente; a conversao para o fuso do usuario acontece
+Tempo e sempre UTC internamente; a conversao para o fuso do usuário acontece
 apenas na camada de apresentacao.
 """
 
@@ -12,7 +12,7 @@ from typing import Protocol, runtime_checkable
 
 @runtime_checkable
 class Clock(Protocol):
-    """Fonte de tempo injetavel (permite testes deterministicos)."""
+    """Fonte de tempo injetável (permite testes determinísticos)."""
 
     def now(self) -> datetime:
         """Instante atual, sempre com timezone (UTC)."""

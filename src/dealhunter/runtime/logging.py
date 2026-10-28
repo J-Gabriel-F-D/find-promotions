@@ -5,7 +5,7 @@ Regras
 * stdout e **exclusivo** para dados (resultados, JSON). Logs vao para stderr e,
   opcionalmente, para arquivo em JSON.
 * Qualquer chave que pareca segredo e mascarada antes de sair do processo.
-* Emails sao parcialmente mascarados para reduzir PII em log (LGPD).
+* Emails são parcialmente mascarados para reduzir PII em log (LGPD).
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ import re
 import sys
 from collections.abc import MutableMapping
 from pathlib import Path
-from typing import Any, TextIO
+from typing import Any, TextIO, cast
 
 import structlog
 from structlog.types import Processor
@@ -51,7 +51,7 @@ def redact_secrets(
     _logger: Any, _method: str, event_dict: MutableMapping[str, Any]
 ) -> MutableMapping[str, Any]:
     """Processor do structlog que remove segredos/PII dos eventos."""
-    return _scrub(dict(event_dict))
+    return cast(MutableMapping[str, Any], _scrub(dict(event_dict)))
 
 
 def _console_renderer(json_console: bool) -> Processor:
@@ -70,7 +70,7 @@ def configure_logging(
     log_file: Path | None = None,
     stream: TextIO | None = None,
 ) -> structlog.stdlib.BoundLogger:
-    """Configura structlog + logging padrao e devolve o logger raiz da app."""
+    """Configura structlog + logging padrão e devolve o logger raiz da app."""
     numeric_level = getattr(logging, level.upper(), logging.INFO)
     shared: list[Processor] = [
         structlog.contextvars.merge_contextvars,
@@ -122,4 +122,4 @@ def configure_logging(
         wrapper_class=structlog.stdlib.BoundLogger,
         cache_logger_on_first_use=True,
     )
-    return structlog.get_logger("dealhunter")
+    return cast(structlog.stdlib.BoundLogger, structlog.get_logger("dealhunter"))

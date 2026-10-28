@@ -2,10 +2,10 @@
 
 Decisoes de projeto
 -------------------
-* Dinheiro e sempre armazenado em **centavos inteiros**. Ponto flutuante nao e
-  usado em nenhum ponto do calculo de precos (evita 0.1 + 0.2 != 0.3).
+* Dinheiro e sempre armazenado em **centavos inteiros**. Ponto flutuante não e
+  usado em nenhum ponto do calculo de preços (evita 0.1 + 0.2 != 0.3).
 * ``Decimal`` aparece apenas na conversao de/para texto, com arredondamento
-  explicito ``ROUND_HALF_UP`` (o mesmo usado no varejo brasileiro).
+  explícito ``ROUND_HALF_UP`` (o mesmo usado no varejo brasileiro).
 * A moeda faz parte do valor: somar BRL com USD levanta erro em vez de produzir
   um numero silenciosamente errado.
 """
@@ -15,6 +15,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
+from typing import cast
 
 _CENT = Decimal("0.01")
 _SYMBOLS = {"BRL": "R$", "USD": "$", "EUR": "€"}
@@ -36,7 +37,7 @@ class Money:
             raise ValueError(f"moeda invalida: {self.currency!r} (use ISO 4217, ex.: BRL)")
         object.__setattr__(self, "currency", code)
 
-    # ------------------------------------------------------------------ criacao
+    # ------------------------------------------------------------------ criação
     @classmethod
     def zero(cls, currency: str = "BRL") -> Money:
         return cls(0, currency)
@@ -58,7 +59,7 @@ class Money:
     def parse(cls, text: str, currency: str = "BRL") -> Money:
         """Interpreta textos como ``R$ 1.649,00``, ``1,649.00`` ou ``1649``.
 
-        Regras de desambiguacao (padrao pt-BR):
+        Regras de desambiguacao (padrão pt-BR):
         * com '.' e ',' juntos, o ultimo separador e o decimal;
         * com apenas um separador repetido ou 3 digitos apos ele, e milhar;
         * demais casos, e decimal.
@@ -101,7 +102,7 @@ class Money:
         return self.format()
 
     def format(self, *, symbol: bool = True) -> str:
-        """Formata no padrao pt-BR: ``R$ 1.649,00``."""
+        """Formata no padrão pt-BR: ``R$ 1.649,00``."""
         sign = "-" if self.cents < 0 else ""
         absolute = abs(self.cents)
         units, centavos = divmod(absolute, 100)
@@ -140,23 +141,28 @@ class Money:
         return Money(abs(self.cents), self.currency)
 
     # ------------------------------------------------------------------ comparacao
-    def _compare(self, other: object) -> int:
+    def _compare(self, other: object) -> int | None:
+        """-1/0/1; ``None`` quando o outro lado não é ``Money``."""
         if not isinstance(other, Money):
-            return NotImplemented  # type: ignore[return-value]
+            return None
         self._check(other)
         return (self.cents > other.cents) - (self.cents < other.cents)
 
     def __lt__(self, other: object) -> bool:
-        return self._compare(other) < 0
+        result = self._compare(other)
+        return cast(bool, NotImplemented) if result is None else result < 0
 
     def __le__(self, other: object) -> bool:
-        return self._compare(other) <= 0
+        result = self._compare(other)
+        return cast(bool, NotImplemented) if result is None else result <= 0
 
     def __gt__(self, other: object) -> bool:
-        return self._compare(other) > 0
+        result = self._compare(other)
+        return cast(bool, NotImplemented) if result is None else result > 0
 
     def __ge__(self, other: object) -> bool:
-        return self._compare(other) >= 0
+        result = self._compare(other)
+        return cast(bool, NotImplemented) if result is None else result >= 0
 
     __hash__ = object.__hash__
 
@@ -170,10 +176,10 @@ class Money:
     def percentage_below(self, reference: Money) -> Decimal:
         """Percentual que este valor esta abaixo de ``reference``.
 
-        Retorna negativo quando este valor e maior que a referencia.
+        Retorna negativo quando este valor e maior que a referência.
         """
         self._check(reference)
         if reference.cents <= 0:
-            raise ValueError("referencia deve ser maior que zero")
+            raise ValueError("referência deve ser maior que zero")
         delta = (reference.cents - self.cents) / reference.cents
         return (Decimal(delta) * 100).quantize(Decimal("0.1"), rounding=ROUND_HALF_UP)

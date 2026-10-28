@@ -1,4 +1,4 @@
-"""Comando ``dealhunter config`` -- inspecao da configuracao efetiva."""
+"""Comando ``dealhunter config`` -- inspecao da configuração efetiva."""
 
 from __future__ import annotations
 
@@ -8,12 +8,12 @@ from dealhunter.cli.render import emit_json, envelope
 from dealhunter.runtime.config import dump_config_toml
 from dealhunter.runtime.container import RuntimeContext
 
-app = typer.Typer(help="Mostra e valida a configuracao efetiva.", no_args_is_help=True)
+app = typer.Typer(help="Mostra e valida a configuração efetiva.", no_args_is_help=True)
 
 
 @app.command("path")
 def show_paths(ctx: typer.Context) -> None:
-    """Exibe os caminhos de configuracao, dados, cache e logs."""
+    """Exibe os caminhos de configuração, dados, cache e logs."""
     rt: RuntimeContext = ctx.obj
     data = rt.paths.as_dict()
     if rt.json_output:
@@ -25,7 +25,7 @@ def show_paths(ctx: typer.Context) -> None:
 
 @app.command("show")
 def show_config(ctx: typer.Context) -> None:
-    """Imprime a configuracao efetiva em TOML (sem segredos)."""
+    """Imprime a configuração efetiva em TOML (sem segredos)."""
     rt: RuntimeContext = ctx.obj
     if rt.json_output:
         emit_json(

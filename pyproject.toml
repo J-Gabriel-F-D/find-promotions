@@ -27,6 +27,7 @@ dependencies = [
   "structlog>=24.4",
   "platformdirs>=4.3",
   "tomli-w>=1.0",
+  "httpx>=0.27",
 ]
 
 [project.optional-dependencies]
@@ -35,6 +36,8 @@ dev = [
   "pytest-cov>=5.0",
   "ruff>=0.7",
   "mypy>=1.13",
+  "respx>=0.21",
+  "hypothesis>=6.112",
 ]
 
 [project.scripts]

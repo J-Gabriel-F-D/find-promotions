@@ -1,4 +1,4 @@
-"""Renderizacao: saida humana (Rich), JSON para automacao e modo silencioso."""
+"""Renderizacao: saída humana (Rich), JSON para automação e modo silencioso."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ def emit_json(payload: dict[str, Any], *, stream: Any = None) -> None:
 
 
 def envelope(command: str, *, generated_at: str, **payload: Any) -> dict[str, Any]:
-    """Envelope padrao de toda saida ``--json``."""
+    """Envelope padrão de toda saída ``--json``."""
     return {
         "schema_version": SCHEMA_VERSION,
         "command": command,
