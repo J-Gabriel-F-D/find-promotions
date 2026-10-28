@@ -90,7 +90,7 @@ def root(
     ] = False,
     no_unicode: Annotated[
         bool,
-        typer.Option("--no-unicode", help="Usa apenas ASCII (terminais limitados)."),
+        typer.Option("--no-unicode", help="Sem símbolos/boxes Unicode (terminais limitados)."),
     ] = False,
     no_ai: Annotated[
         bool,

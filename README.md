@@ -296,7 +296,7 @@ gera no máximo uma amostra por hora (mudança de preço é sempre registrada).
 | `--quiet`, `-q` | Apenas eventos relevantes |
 | `--debug` | Log detalhado, com segredos mascarados |
 | `--no-color` | Desativa cores |
-| `--no-unicode` | Força ASCII em terminais limitados |
+| `--no-unicode` | Usa caixas e símbolos ASCII em terminais limitados |
 | `--no-ai` | Desliga a IA mesmo se configurada |
 | `--config PATH` | Usa um TOML específico |
 

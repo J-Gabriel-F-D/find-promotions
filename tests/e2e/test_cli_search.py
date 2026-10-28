@@ -77,6 +77,9 @@ class TestSearch:
         assert result.exit_code == 0, result.output
         assert "[BEST]" in result.output
         assert "🏆" not in result.output
+        assert "╭" not in result.output
+        assert "┌" not in result.output
+        assert "+" in result.output
 
     def test_filtro_de_preco_aparece_no_resumo(self, tmp_path: Path) -> None:
         result = _invoke(

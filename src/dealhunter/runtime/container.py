@@ -62,19 +62,29 @@ class RuntimeContext:
         return self.config.ai.enabled and not self.flags.ai_disabled
 
 
+class _AsciiConsole(Console):
+    """Console que força caixas/guia ASCII quando ``--no-unicode`` está ativo."""
+
+    @property
+    def encoding(self) -> str:
+        return "ascii"
+
+
 def _make_console(*, stderr: bool, no_color: bool, json_output: bool, unicode: bool) -> Console:
     color_enabled = not no_color and not json_output
     target = sys.stderr if stderr else sys.stdout
     # Redirecionado para arquivo/pipe o Rich assume 80 colunas e quebra caminhos;
     # 110 mantem a tabela legivel sem inventar largura de terminal.
     width = None if target.isatty() else 110
-    return Console(
+    console_cls = Console if unicode else _AsciiConsole
+    return console_cls(
         stderr=stderr,
         force_terminal=None if color_enabled else False,
         no_color=not color_enabled,
         highlight=False,
         soft_wrap=False,
         emoji=unicode,
+        safe_box=unicode,
         legacy_windows=False,
         width=width,
     )
@@ -109,20 +119,24 @@ def build_runtime(
         stream=stderr or sys.stderr,
     )
 
+    unicode_enabled = config.general.unicode and not flags.no_unicode
     console = _make_console(
         stderr=False,
         no_color=flags.no_color,
         json_output=flags.json_output,
-        unicode=config.general.unicode and not flags.no_unicode,
+        unicode=unicode_enabled,
     )
     error_console = _make_console(
         stderr=True,
         no_color=flags.no_color,
         json_output=flags.quiet,
-        unicode=config.general.unicode and not flags.no_unicode,
+        unicode=unicode_enabled,
     )
     if stdout is not None:
-        console = Console(file=stdout, no_color=True, highlight=False, width=200)
+        console_cls = Console if unicode_enabled else _AsciiConsole
+        console = console_cls(
+            file=stdout, no_color=True, highlight=False, width=200, safe_box=unicode_enabled
+        )
 
     return RuntimeContext(
         config=config,
@@ -134,7 +148,7 @@ def build_runtime(
         console=console,
         error_console=error_console,
         database=Database(paths.database_file),
-        glyphs=glyphs_for(config.general.unicode and not flags.no_unicode),
+        glyphs=glyphs_for(unicode_enabled),
     )
 
 

@@ -20,11 +20,13 @@ DISCLAIMER = (
 )
 
 
-def _bar(value: int, total: int, width: int = 20) -> str:
+def _bar(value: int, total: int, *, unicode: bool, width: int = 20) -> str:
     if total <= 0:
         return ""
     filled = round(value / total * width)
-    return "█" * filled + "·" * (width - filled)
+    filled_char = "█" if unicode else "#"
+    empty_char = "·" if unicode else "."
+    return filled_char * filled + empty_char * (width - filled)
 
 
 def review_source_payload(row: ReviewRow, *, now: datetime) -> dict[str, Any]:
@@ -78,8 +80,10 @@ def render_reviews(report: ReviewReport, rt: RuntimeContext) -> None:
         )
         for score in (5, 4, 3, 2, 1):
             count = review.distribution.get(score, 0)
+            suffix = "★" if rt.unicode_enabled else " estrelas"
+            bar = _bar(count, review.rating_count, unicode=rt.unicode_enabled)
             console.print(
-                f"  {score}★ [cyan]{_bar(count, review.rating_count)}[/cyan] {count}",
+                f"  {score}{suffix} [cyan]{bar}[/cyan] {count}",
                 highlight=False,
             )
         if review.negative_share:
