@@ -97,10 +97,16 @@ def search_command(
             best = report.views[0]
             rt.console.print(
                 f"{best.offer.final_price} | {best.store.name} | "
-                f"{best.product.title} | {best.offer.url}"
+                f"{best.product.title} | {best.offer.url}",
+                soft_wrap=True,
             )
     else:
         render_search(report, rt)
 
     if not report.views:
+        failed = [status for status in report.sources if status.status in {"error", "timeout"}]
+        if report.sources and len(failed) == len(report.sources):
+            raise typer.Exit(code=int(ExitCode.ALL_SOURCES_FAILED))
         raise typer.Exit(code=int(ExitCode.NO_RESULTS))
+    if any(status.status in {"error", "timeout"} for status in report.sources):
+        raise typer.Exit(code=int(ExitCode.PARTIAL_FAILURE))

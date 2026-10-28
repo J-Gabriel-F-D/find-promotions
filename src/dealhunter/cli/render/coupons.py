@@ -159,7 +159,10 @@ def render_coupon_check(
             lines.append(f"Válido até: {coupon.valid_until.strftime('%d/%m/%Y %H:%M')} (UTC)")
         if coupon.min_purchase is not None:
             lines.append(f"Mínimo: {coupon.min_purchase}")
-        lines.append(f"[dim]Fonte: {escape(coupon.source)} · {escape(coupon.source_url)}[/dim]")
+        lines.append(
+            f"[dim]Fonte: {escape(coupon.source)} {rt.glyphs.idle} "
+            f"{escape(coupon.source_url)}[/dim]"
+        )
 
         console.print(
             Panel(

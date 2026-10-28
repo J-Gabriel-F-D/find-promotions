@@ -39,6 +39,11 @@ dev = [
   "respx>=0.21",
   "hypothesis>=6.112",
 ]
+security = [
+  "bandit>=1.7",
+  "detect-secrets>=1.5",
+  "pip-audit>=2.7",
+]
 
 [project.scripts]
 dealhunter = "dealhunter.cli.app:main"
@@ -51,6 +56,23 @@ testpaths = ["tests"]
 addopts = "-q"
 pythonpath = ["src"]
 filterwarnings = ["error::DeprecationWarning:dealhunter.*"]
+markers = [
+  "security: testes de segurança, privacidade e abuso",
+  "integration: integração com servidores/adapters locais",
+  "e2e: fluxos completos pela CLI",
+  "functional: contrato funcional da CLI",
+  "regression: regressões de falhas corrigidas",
+]
+
+[tool.coverage.run]
+source = ["dealhunter"]
+branch = true
+omit = ["*/data/*"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+fail_under = 85
 
 [tool.ruff]
 line-length = 100

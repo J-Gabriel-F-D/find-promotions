@@ -13,6 +13,7 @@ from typing import Literal, Protocol, runtime_checkable
 
 from dealhunter.application.dto import QuerySpec
 from dealhunter.domain.models import CollectedOffer, SourceStatus
+from dealhunter.runtime.logging import redact_text
 
 Capability = Literal["search", "detail", "coupons", "reviews"]
 
@@ -79,7 +80,7 @@ class CollectorRunner:
                         label=adapter.label,
                         status="error",
                         duration_ms=_elapsed_ms(started),
-                        error=f"{type(exc).__name__}: {exc}",
+                        error=redact_text(f"{type(exc).__name__}: {exc}"),
                     ),
                     offers=(),
                 )

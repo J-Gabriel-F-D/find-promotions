@@ -9,7 +9,11 @@ from __future__ import annotations
 import smtplib
 from email.message import EmailMessage
 
-from dealhunter.adapters.notify.base import NotificationError, NotificationMessage
+from dealhunter.adapters.notify.base import (
+    NotificationError,
+    NotificationMessage,
+    is_valid_email,
+)
 
 
 class SmtpChannel:
@@ -41,6 +45,10 @@ class SmtpChannel:
         recipient = message.destination or self._default_recipient
         if not recipient:
             raise NotificationError("destinatário de e-mail não configurado")
+        if not is_valid_email(recipient):
+            raise NotificationError("destinatário de e-mail inválido")
+        if not is_valid_email(self._sender):
+            raise NotificationError("remetente de e-mail inválido")
 
         email = EmailMessage()
         email["Subject"] = message.subject
@@ -57,5 +65,7 @@ class SmtpChannel:
                 if self._user and self._password:
                     smtp.login(self._user, self._password)
                 smtp.send_message(email)
-        except (smtplib.SMTPException, OSError) as exc:
-            raise NotificationError(f"falha ao enviar e-mail: {exc}") from exc
+        except (smtplib.SMTPException, OSError, ValueError) as exc:
+            # Não repassar a mensagem crua: servidores podem ecoar dados do
+            # destinatário e mensagens de autenticação não devem vazar nada.
+            raise NotificationError(f"falha ao enviar e-mail ({type(exc).__name__})") from exc

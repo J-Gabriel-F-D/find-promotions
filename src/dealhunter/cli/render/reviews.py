@@ -76,7 +76,7 @@ def render_reviews(report: ReviewReport, rt: RuntimeContext) -> None:
         console.print(
             f"{rt.glyphs.star} [bold]{rating}/5[/bold] em "
             f"{review.rating_count} avaliações "
-            f"[dim]({escape(row.store_name)} · {escape(review.source)})[/dim]"
+            f"[dim]({escape(row.store_name)} {rt.glyphs.idle} {escape(review.source)})[/dim]"
         )
         for score in (5, 4, 3, 2, 1):
             count = review.distribution.get(score, 0)

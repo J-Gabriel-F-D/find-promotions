@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from collections.abc import Callable, Mapping
 
-from dealhunter.adapters.notify.base import Notifier
+from dealhunter.adapters.notify.base import Notifier, is_valid_email
 from dealhunter.adapters.notify.console import ConsoleChannel
 from dealhunter.adapters.notify.smtp import SmtpChannel
 from dealhunter.runtime.config import NotificationSettings
@@ -26,6 +26,10 @@ def build_notifier(
         sender = settings.email_from or settings.smtp_user
         if not sender:
             warnings.append("canal 'email' ignorado: configure 'email_from'")
+        elif not is_valid_email(sender):
+            warnings.append("canal 'email' ignorado: remetente inválido")
+        elif settings.email_to and not is_valid_email(settings.email_to):
+            warnings.append("canal 'email' ignorado: destinatário inválido")
         else:
             channels["email"] = SmtpChannel(
                 host=settings.smtp_host,

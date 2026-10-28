@@ -765,6 +765,11 @@ class SqliteRepository:
     def get_alert(self, alert_id: int) -> StoredAlert | None:
         return next((alert for alert in self.list_alerts() if alert.id == alert_id), None)
 
+    def count_active_alerts(self) -> int:
+        with self._db.connect() as connection:
+            row = connection.execute("SELECT COUNT(*) FROM alert WHERE active = 1").fetchone()
+        return int(row[0]) if row else 0
+
     def set_alert_active(self, alert_id: int, active: bool) -> bool:
         with self._db.connect() as connection:
             cursor = connection.execute(
@@ -861,3 +866,11 @@ class SqliteRepository:
                 (limit,),
             ).fetchall()
         return [dict(row) for row in rows]
+
+    def count_notifications_since(self, since: datetime) -> int:
+        """Quantas tentativas de notificação ocorreram desde ``since``."""
+        with self._db.connect() as connection:
+            row = connection.execute(
+                "SELECT COUNT(*) FROM notification WHERE created_at >= ?", (iso(since),)
+            ).fetchone()
+        return int(row[0]) if row else 0

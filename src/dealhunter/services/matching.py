@@ -54,7 +54,7 @@ def evaluate(spec: QuerySpec, offer: CollectedOffer) -> str | None:
 
     if spec.brand is not None:
         brand = offer.brand or detect_brand(offer.title)
-        if brand is not None and brand != spec.brand:
+        if brand is not None and normalize_text(brand) != normalize_text(spec.brand):
             return "marca_diferente"
 
     if spec.exclude_stores:

@@ -13,6 +13,7 @@ from typing import Annotated
 
 import typer
 from rich.console import Console
+from rich.markup import escape
 
 from dealhunter import __version__
 from dealhunter.cli.commands import alerts as alerts_cmd
@@ -117,7 +118,7 @@ def root(
     try:
         runtime = build_runtime(config_path=config_file, flags=flags)
     except ConfigError as exc:
-        Console(stderr=True).print(f"[bold red]Erro de configuração:[/bold red] {exc}")
+        Console(stderr=True).print(f"[bold red]Erro de configuração:[/bold red] {escape(str(exc))}")
         raise typer.Exit(code=int(ExitCode.CONFIG_ERROR)) from exc
 
     ctx.obj = runtime
@@ -151,7 +152,7 @@ def main() -> None:
     try:
         app(prog_name="dealhunter")
     except ConfigError as exc:
-        Console(stderr=True).print(f"[bold red]Erro de configuração:[/bold red] {exc}")
+        Console(stderr=True).print(f"[bold red]Erro de configuração:[/bold red] {escape(str(exc))}")
         raise SystemExit(int(ExitCode.CONFIG_ERROR)) from exc
     except KeyboardInterrupt:
         Console(stderr=True).print("\n[dim]Interrompido pelo usuário.[/dim]")

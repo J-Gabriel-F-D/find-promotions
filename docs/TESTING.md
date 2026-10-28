@@ -1,0 +1,100 @@
+# Testes e verificação de segurança
+
+## Como rodar
+
+Windows (PowerShell):
+
+```powershell
+.\scripts\test.ps1 test
+.\scripts\test.ps1 unit
+.\scripts\test.ps1 integration
+.\scripts\test.ps1 e2e
+.\scripts\test.ps1 security
+.\scripts\test.ps1 functional
+.\scripts\test.ps1 regression
+.\scripts\test.ps1 coverage
+.\scripts\test.ps1 all
+```
+
+Linux/macOS (Make):
+
+```bash
+make test
+make test-unit
+make test-integration
+make test-e2e
+make test-security
+make test-functional
+make test-regression
+make test-coverage
+make test-all
+```
+
+Também é possível usar o pytest diretamente:
+
+```bash
+python -m pytest -m security
+python -m pytest -m "integration or e2e"
+python -m pytest tests/security
+python -m pytest --cov=dealhunter --cov-report=term-missing
+```
+
+`make test-all`/`test.ps1 all` executa: formatação, lint, mypy, bandit,
+detect-secrets, pip-audit e a suíte completa com cobertura. As ferramentas de
+segurança são opcionais no runtime e podem ser instaladas com:
+
+```bash
+python -m pip install -e ".[dev,security]"
+```
+
+## Organização
+
+| Diretório | Conteúdo |
+|---|---|
+| `tests/unit` | regras de domínio, serviços, adapters e repositório |
+| `tests/integration` | servidor HTTP local, feed/robots, falha parcial, banco |
+| `tests/e2e` | fluxos completos pela CLI, inclusive cenários de segurança |
+| `tests/functional` | contrato de argumentos, saída, flags globais e exit codes |
+| `tests/security` | SSRF, injeção, PII, segredos, abuso, canais e fontes maliciosas |
+| `tests/regression` | falhas reais encontradas e corrigidas, mantidas como regressão |
+
+Os marcadores são aplicados automaticamente pelo diretório em
+`tests/conftest.py`: `security`, `integration`, `e2e`, `functional` e
+`regression`.
+
+## Política de testes sem efeitos externos
+
+- Nenhum teste acessa sites reais, APIs de produção, SMTP, WhatsApp ou SMS.
+- HTTP é simulado com `httpx.MockTransport`/`respx` ou servidor local em
+  `127.0.0.1`; o bloqueio de SSRF é desativado apenas nesse servidor local.
+- E-mail usa `smtplib.SMTP` mockado. Nenhuma mensagem real é enviada.
+- Segredos, tokens, e-mails e telefones usados em testes são fictícios.
+- Datas e relógios são congelados quando o teste depende de janelas/idade de
+  histórico.
+
+## Cobertura atual
+
+- 430 testes aprovados, 3 ignorados (permissões POSIX e cenários dependentes de
+  plataforma), em Windows/Python 3.14.5.
+- Cobertura combinada: **87,22%** (limite mínimo configurado: 85%).
+- `ruff format --check`, `ruff check` e `mypy src` sem erros.
+- `bandit -r src`: sem achados (o jitter de retry é marcado como `nosec B311`,
+  pois não é usado para criptografia).
+- `detect-secrets scan src`: nenhum segredo encontrado.
+- `pip-audit --skip-editable`: nenhuma vulnerabilidade conhecida. O pacote
+  local `dealhunter` é ignorado por não estar publicado no PyPI.
+
+## Limites conhecidos
+
+A suíte cobre apenas comportamento implementado. Ainda **não** existem, e por
+isso não são testados como se existissem:
+
+- score de confiança/antifraude e análise de reclamações individuais;
+- comando `monitor` contínuo;
+- SMS e WhatsApp (o WhatsApp só pode usar API oficial);
+- integração com keyring;
+- comandos LGPD de exportação/esquecimento;
+- linhas individuais de avaliações (hoje há apenas o agregado publicado).
+
+Esses pontos permanecem registrados como risco ou funcionalidade pendente, não
+como teste aprovado artificialmente.

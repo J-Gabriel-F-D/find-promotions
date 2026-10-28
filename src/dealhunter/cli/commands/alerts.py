@@ -73,6 +73,7 @@ def create(
             channels=channels,
             label=label,
             now=rt.clock.now(),
+            max_active=rt.config.monitor.max_active_alerts,
         )
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc
@@ -197,6 +198,8 @@ def delete(ctx: typer.Context, alert_id: Annotated[int, typer.Argument()]) -> No
                 deleted=deleted,
             )
         )
+        if not deleted:
+            raise typer.Exit(code=int(ExitCode.NO_RESULTS))
         return
 
     if not deleted:
@@ -246,13 +249,13 @@ def check(
     for outcome in outcomes:
         if not outcome.matched:
             rt.console.print(
-                f"[dim]#{outcome.alert_id} {escape(outcome.label)}: {outcome.note}[/dim]"
+                f"[dim]#{outcome.alert_id} {escape(outcome.label)}: {escape(outcome.note)}[/dim]"
             )
             continue
         rt.console.print(
             f"[bold green]#{outcome.alert_id}[/bold green] {escape(outcome.label)}: "
-            f"{outcome.price} — {outcome.note}"
+            f"{outcome.price} — {escape(outcome.note)}"
         )
         for channel, ok, error in outcome.channels_sent:
             mark = "[green]ok[/green]" if ok else f"[red]falhou ({escape(error or '')})[/red]"
-            rt.console.print(f"  {channel}: {mark}")
+            rt.console.print(f"  {escape(channel)}: {mark}")

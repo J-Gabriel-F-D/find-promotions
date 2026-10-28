@@ -11,9 +11,11 @@ Além das ofertas, o feed pode declarar ``coupons`` (por oferta), ``promotion``
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any, cast
+from urllib.parse import urlsplit
 
 from dealhunter.adapters.http.client import HttpClient
 from dealhunter.adapters.http.robots import RobotsGuard
@@ -33,20 +35,74 @@ from dealhunter.domain.value_objects.money import Money
 _COUPON_KINDS: set[str] = {"percent", "fixed", "free_shipping"}
 _PROMOTION_KINDS: set[str] = {"flash", "regular", "clearance"}
 
+_MAX_OFFERS = 500
+_MAX_TITLE = 500
+_MAX_URL = 2_048
+_MAX_STORE = 200
+_MAX_SELLER = 200
+_MAX_CODE = 100
+_MAX_LABEL = 200
+_MAX_TEXT = 200
+_MAX_SPECS = 50
+_DOMAIN = re.compile(r"^[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?$")
+_CURRENCY = re.compile(r"^[A-Z]{3}$")
+# Remove controles C0/C1, DEL, escapes ANSI e controles de direção bidi.
+_CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]")
+
+
+def _text(value: Any, *, limit: int) -> str | None:
+    """Texto externo saneado; ``None`` quando ausente ou acima do limite."""
+    if value is None:
+        return ""
+    if not isinstance(value, str):
+        value = str(value)
+    cleaned = " ".join(_CONTROL.sub("", value).split())
+    if len(cleaned) > limit:
+        return None
+    return cleaned
+
+
+def _http_url(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    text = _CONTROL.sub("", value).strip()
+    if not text or len(text) > _MAX_URL:
+        return None
+    parts = urlsplit(text)
+    if parts.scheme not in {"http", "https"} or not parts.hostname:
+        return None
+    if parts.username or parts.password:
+        return None
+    return text
+
+
+def _domain(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    text = _CONTROL.sub("", value).strip().lower()
+    if not text or len(text) > 253:
+        return None
+    if any(char in text for char in "/:@?# \t"):
+        return None
+    host = text.strip(".")
+    if not host or ".." in host or not _DOMAIN.fullmatch(host):
+        return None
+    return host
+
 
 def _cents(value: Any) -> int | None:
-    if value is None or value == "":
+    if value is None or value == "" or isinstance(value, bool):
         return None
     if isinstance(value, int):
         return Money.from_decimal(Decimal(value)).cents
     try:
         return Money.parse(str(value)).cents
-    except (ValueError, InvalidOperation):
+    except (ValueError, InvalidOperation, TypeError):
         return None
 
 
 def _int(value: Any) -> int | None:
-    if value is None or value == "":
+    if value is None or value == "" or isinstance(value, bool):
         return None
     try:
         return int(value)
@@ -55,7 +111,7 @@ def _int(value: Any) -> int | None:
 
 
 def _float(value: Any) -> float | None:
-    if value is None or value == "":
+    if value is None or value == "" or isinstance(value, bool):
         return None
     try:
         return float(value)
@@ -115,7 +171,7 @@ class FeedAdapter:
             if not isinstance(items, list):
                 raise ValueError(f"feed sem lista 'offers': {feed_url}")
 
-            for raw in items:
+            for raw in items[:_MAX_OFFERS]:
                 parsed = self._parse(raw, fallback_source=feed_url)
                 if parsed is not None:
                     offers.append(parsed)
@@ -128,71 +184,109 @@ class FeedAdapter:
         if not isinstance(raw, dict):
             return None
 
-        title = str(raw.get("title") or "").strip()
-        url = str(raw.get("url") or "").strip()
+        title = _text(raw.get("title"), limit=_MAX_TITLE)
+        url = _http_url(raw.get("url"))
         price_cents = _cents(raw.get("price"))
-        if not title or not url or price_cents is None:
+        if not title or not url or price_cents is None or price_cents <= 0:
             return None
 
-        condition_raw = str(raw.get("condition") or "new").lower()
+        currency = str(raw.get("currency") or "BRL").strip().upper()
+        if not _CURRENCY.fullmatch(currency):
+            return None
+
+        source_url = _http_url(raw.get("source_url")) or fallback_source
+        list_price_cents = _cents(raw.get("list_price"))
+        if list_price_cents is not None and list_price_cents <= 0:
+            list_price_cents = None
+        shipping_cents = _cents(raw.get("shipping"))
+        if shipping_cents is not None and shipping_cents < 0:
+            shipping_cents = None
+
+        condition_raw = str(raw.get("condition") or "new").strip().lower()
         condition: Condition = (
             cast(Condition, condition_raw)
             if condition_raw in {"new", "used", "refurbished"}
             else "new"
         )
 
-        specs_raw = raw.get("specs")
-        specs: dict[object, object] = specs_raw if isinstance(specs_raw, dict) else {}
+        specs = self._parse_specs(raw.get("specs"))
+        brand = _text(raw.get("brand"), limit=_MAX_TEXT) or None
+        gtin = _text(raw.get("gtin"), limit=_MAX_TEXT) or None
+        mpn = _text(raw.get("mpn"), limit=_MAX_TEXT) or None
+        seller_name = _text(raw.get("seller"), limit=_MAX_SELLER) or None
+        availability = _text(raw.get("availability"), limit=_MAX_TEXT) or "unknown"
 
         return CollectedOffer(
             source_id=self.id,
             title=title,
             url=url,
-            source_url=str(raw.get("source_url") or fallback_source),
+            source_url=source_url,
             price_cents=price_cents,
-            currency=str(raw.get("currency") or "BRL").upper(),
-            list_price_cents=_cents(raw.get("list_price")),
-            shipping_cents=_cents(raw.get("shipping")),
-            store_name=str(raw.get("store") or "Loja"),
-            store_domain=raw.get("store_domain"),
-            seller_name=raw.get("seller"),
+            currency=currency,
+            list_price_cents=list_price_cents,
+            shipping_cents=shipping_cents,
+            store_name=_text(raw.get("store"), limit=_MAX_STORE) or "Loja",
+            store_domain=_domain(raw.get("store_domain")),
+            seller_name=seller_name,
             seller_rating=_float(raw.get("seller_rating")),
             condition=condition,
-            availability=str(raw.get("availability") or "unknown"),
-            brand=raw.get("brand"),
-            gtin=raw.get("gtin"),
-            mpn=raw.get("mpn"),
-            specs={str(key): str(value) for key, value in specs.items()},
+            availability=availability,
+            brand=brand,
+            gtin=gtin,
+            mpn=mpn,
+            specs=specs,
             confidence=0.75,
             coupons=self._parse_coupons(raw.get("coupons")),
             promotion=self._parse_promotion(raw.get("promotion")),
             reviews=self._parse_reviews(raw.get("reviews")),
         )
 
+    def _parse_specs(self, raw: Any) -> dict[str, str]:
+        if not isinstance(raw, dict):
+            return {}
+        specs: dict[str, str] = {}
+        for key, value in list(raw.items())[:_MAX_SPECS]:
+            name = _text(key, limit=_MAX_TEXT)
+            text = _text(value, limit=_MAX_TEXT)
+            if name and text:
+                specs[name] = text
+        return specs
+
     def _parse_coupons(self, raw: Any) -> tuple[CollectedCoupon, ...]:
         if not isinstance(raw, list):
             return ()
         coupons: list[CollectedCoupon] = []
-        for item in raw:
+        for item in raw[:20]:
             if not isinstance(item, dict):
                 continue
-            code = str(item.get("code") or "").strip()
+            code = _text(item.get("code"), limit=_MAX_CODE)
             kind = str(item.get("kind") or item.get("type") or "").strip().lower()
             value = _int(item.get("value")) or 0
             if not code or kind not in _COUPON_KINDS:
                 continue
             if kind in {"percent", "fixed"} and value <= 0:
                 continue
+            if kind == "percent" and value > 100:
+                continue
+            min_purchase = _cents(item.get("min_purchase"))
+            max_discount = _cents(item.get("max_discount"))
+            if (min_purchase is not None and min_purchase < 0) or (
+                max_discount is not None and max_discount < 0
+            ):
+                continue
+            currency = str(item.get("currency") or "BRL").strip().upper()
+            if not _CURRENCY.fullmatch(currency):
+                continue
             coupons.append(
                 CollectedCoupon(
                     code=code,
                     kind=cast(CouponKind, kind),
                     value=value,
-                    min_purchase_cents=_cents(item.get("min_purchase")),
-                    max_discount_cents=_cents(item.get("max_discount")),
+                    min_purchase_cents=min_purchase,
+                    max_discount_cents=max_discount,
                     valid_from=_datetime(item.get("valid_from")),
                     valid_until=_datetime(item.get("valid_until"), end_of_day=True),
-                    currency=str(item.get("currency") or "BRL").upper(),
+                    currency=currency,
                     confidence=0.6,
                 )
             )
@@ -204,13 +298,16 @@ class FeedAdapter:
         kind = str(raw.get("kind") or raw.get("type") or "regular").strip().lower()
         if kind not in _PROMOTION_KINDS:
             kind = "regular"
+        label = _text(raw.get("label"), limit=_MAX_LABEL)
+        if label is None:
+            return None
         starts_at = _datetime(raw.get("starts_at"))
         ends_at = _datetime(raw.get("ends_at"))
         if starts_at is None and ends_at is None:
             return None
         return CollectedPromotion(
             kind=cast(PromotionKind, kind),
-            label=str(raw.get("label") or ""),
+            label=label,
             starts_at=starts_at,
             ends_at=ends_at,
             confidence=0.6,

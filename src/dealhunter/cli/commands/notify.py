@@ -6,6 +6,7 @@ from typing import Annotated
 
 import typer
 from rich import box
+from rich.markup import escape
 from rich.table import Table
 
 from dealhunter.adapters.notify.base import NotificationMessage, Notifier
@@ -54,7 +55,7 @@ def status(ctx: typer.Context) -> None:
     rt.console.print(table)
 
     for warning in warnings:
-        rt.console.print(f"[yellow]! {warning}[/yellow]")
+        rt.console.print(f"[yellow]! {escape(warning)}[/yellow]")
     if not notifier.supports("email"):
         rt.console.print(
             "[dim]Para e-mail: configure [notifications] smtp_host, email_from e email_to, "
@@ -107,11 +108,11 @@ def test(
     else:
         for name, ok, error in results:
             if ok:
-                rt.console.print(f"[green]{name}: enviado[/green]")
+                rt.console.print(f"[green]{escape(name)}: enviado[/green]")
             else:
-                rt.console.print(f"[red]{name}: falhou ({error})[/red]")
+                rt.console.print(f"[red]{escape(name)}: falhou ({escape(error or '')})[/red]")
         for warning in warnings:
-            rt.console.print(f"[yellow]! {warning}[/yellow]")
+            rt.console.print(f"[yellow]! {escape(warning)}[/yellow]")
 
     if not all(ok for _, ok, _ in results):
         raise typer.Exit(code=int(ExitCode.ERROR))

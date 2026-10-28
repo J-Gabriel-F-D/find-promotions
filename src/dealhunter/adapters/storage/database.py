@@ -15,9 +15,10 @@ Convencoes
 
 from __future__ import annotations
 
+import os
 import sqlite3
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -72,6 +73,9 @@ class Database:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         connection = sqlite3.connect(self._path, timeout=5.0)
         connection.row_factory = sqlite3.Row
+        if os.name != "nt":
+            with suppress(OSError):
+                self._path.chmod(0o600)
         try:
             connection.execute("PRAGMA journal_mode=WAL")
             connection.execute("PRAGMA foreign_keys=ON")

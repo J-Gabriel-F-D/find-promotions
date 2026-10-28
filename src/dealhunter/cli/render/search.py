@@ -264,7 +264,7 @@ def _offer_card(view: OfferView, rt: RuntimeContext, badges: list[str], now: dat
     if view.promotion is not None and view.promotion.state_at(now) == "active":
         promo_label = view.promotion.label or "promoção ativa"
         remaining = promotion_rules.remaining_label(view.promotion, now)
-        suffix = f" [dim]· {remaining}[/dim]" if remaining else ""
+        suffix = f" [dim]{glyphs.idle} {remaining}[/dim]" if remaining else ""
         lines.append(f"{glyphs.fire} [bold yellow]{escape(promo_label)}[/bold yellow]{suffix}")
         lines.append("[dim]janela declarada pela fonte; urgência não indica confiabilidade[/dim]")
     elif view.promotion is not None:
@@ -335,7 +335,9 @@ def render_search(report: SearchReport, rt: RuntimeContext) -> None:
         )
     )
 
-    summary = "\n".join(report.spec.summary()) or f"Busca livre: {escape(report.spec.raw)}"
+    summary = "\n".join(escape(line) for line in report.spec.summary()) or (
+        f"Busca livre: {escape(report.spec.raw)}"
+    )
     console.print(summary, style="bold")
     console.print(_source_lines(report, rt))
     console.print(

@@ -7,12 +7,31 @@ roda a CLI sem SMTP); ``email`` depende de configuração explicita.
 from __future__ import annotations
 
 import asyncio
+import re
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
+
+from dealhunter.runtime.logging import redact_text
+
+MAX_SUBJECT_CHARS = 200
+MAX_BODY_CHARS = 50_000
+_EMAIL = re.compile(
+    r"^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
+    r"(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$"
+)
 
 
 class NotificationError(RuntimeError):
     pass
+
+
+def is_valid_email(address: str | None) -> bool:
+    """Validação pragmática de destinatário (sem header injection)."""
+    if not address or len(address) > 254:
+        return False
+    if any(char in address for char in "\r\n\x00<> ,;"):
+        return False
+    return bool(_EMAIL.fullmatch(address.strip()))
 
 
 @dataclass(frozen=True, slots=True)
@@ -20,6 +39,14 @@ class NotificationMessage:
     subject: str
     body: str
     destination: str | None = None
+
+    def __post_init__(self) -> None:
+        if not self.subject.strip() or len(self.subject) > MAX_SUBJECT_CHARS:
+            raise ValueError("assunto de notificação inválido ou muito longo")
+        if "\r" in self.subject or "\n" in self.subject or "\x00" in self.subject:
+            raise ValueError("assunto de notificação não pode conter quebras de linha")
+        if len(self.body) > MAX_BODY_CHARS or "\x00" in self.body:
+            raise ValueError("corpo de notificação inválido ou muito longo")
 
 
 @runtime_checkable
@@ -51,5 +78,6 @@ class Notifier:
         try:
             await asyncio.to_thread(channel.send, message)
         except Exception as exc:  # noqa: BLE001 - falha de canal não pode derrubar o alerta
-            return False, f"{type(exc).__name__}: {exc}"
+            detail = redact_text(str(exc))
+            return False, f"{type(exc).__name__}: {detail}"
         return True, None

@@ -16,6 +16,7 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
+from urllib.parse import urlsplit, urlunsplit
 
 from pydantic import BaseModel, Field, ValidationError
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -56,6 +57,7 @@ class MonitorSettings(BaseModel):
     quiet_hours_start: str = "22:00"
     quiet_hours_end: str = "07:00"
     cooldown_minutes: int = Field(default=720, ge=0)
+    max_active_alerts: int = Field(default=50, ge=1, le=1_000)
 
 
 class AISettings(BaseModel):
@@ -76,6 +78,7 @@ class NotificationSettings(BaseModel):
     smtp_password_env: str = "DEALHUNTER_SMTP_PASSWORD"
     use_starttls: bool = True
     whatsapp_template: str | None = None
+    max_per_hour: int = Field(default=30, ge=1, le=1_000)
 
 
 class SourcesSettings(BaseModel):
@@ -227,9 +230,58 @@ def _apply_env_overrides(config: AppConfig, environ: dict[str, str]) -> AppConfi
     return AppConfig.model_validate(data)
 
 
-def dump_config_toml(config: AppConfig) -> str:
+def _mask_account(value: str | None) -> str | None:
+    """Mascara a parte local de um e-mail/usuário, preservando o domínio."""
+    if not value:
+        return value
+    local, separator, domain = value.partition("@")
+    if not local:
+        return "***"
+    masked = f"{local[0]}***"
+    return f"{masked}{separator}{domain}" if separator else masked
+
+
+def _mask_feed_url(value: str) -> str:
+    """Remove credenciais, query e fragmento de URLs exibidas."""
+    try:
+        parts = urlsplit(value)
+        port = f":{parts.port}" if parts.port is not None else ""
+    except ValueError:
+        return "***"
+    host = parts.hostname or ""
+    if not parts.scheme or not host:
+        return "***"
+    if ":" in host:
+        host = f"[{host}]"
+    query = "***" if parts.query else ""
+    return urlunsplit((parts.scheme, f"{host}{port}", parts.path, query, ""))
+
+
+def mask_config_pii(config: AppConfig) -> AppConfig:
+    """Copia da configuração com PII e segredos de URL mascarados.
+
+    Usada apenas para exibição (`config show`). Os valores reais continuam
+    disponíveis internamente para montar os canais e coletar feeds.
+    """
+    notifications = config.notifications.model_copy(
+        update={
+            "email_from": _mask_account(config.notifications.email_from),
+            "email_to": _mask_account(config.notifications.email_to),
+            "smtp_user": _mask_account(config.notifications.smtp_user),
+        }
+    )
+    sources = config.sources.model_copy(
+        update={"feed_urls": [_mask_feed_url(url) for url in config.sources.feed_urls]}
+    )
+    return config.model_copy(update={"notifications": notifications, "sources": sources})
+
+
+def dump_config_toml(config: AppConfig, *, mask_pii: bool = True) -> str:
     """Serializa a configuração efetiva (sem segredos) como TOML."""
     import tomli_w
+
+    if mask_pii:
+        config = mask_config_pii(config)
 
     def strip_none(value: Any) -> Any:
         if isinstance(value, dict):

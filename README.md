@@ -491,10 +491,16 @@ Decisões registradas: [`docs/adr`](docs/adr).
 
 ```bash
 .venv\Scripts\python -m pytest        # suíte completa
+.venv\Scripts\python -m pytest -m security
+.venv\Scripts\python -m pytest --cov=dealhunter --cov-report=term-missing
 .venv\Scripts\python -m ruff check src tests
 .venv\Scripts\python -m ruff format --check src tests
 .venv\Scripts\python -m mypy src
 ```
+
+Atalhos reproduzíveis: `.\scripts\test.ps1 all` no Windows e `make test-all`
+no Linux/macOS. A matriz de testes, a política de mocks e os limites conhecidos
+estão em [`docs/TESTING.md`](docs/TESTING.md).
 
 ## Princípios
 

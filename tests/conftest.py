@@ -87,3 +87,19 @@ def make_record(
         confidence=0.9,
     )
     return OfferRecord(product=product, store=store, seller=seller, offer=offer)
+
+
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    """Aplica marcadores por diretório para permitir ``pytest -m security``."""
+    markers = {
+        "security": "security",
+        "integration": "integration",
+        "e2e": "e2e",
+        "functional": "functional",
+        "regression": "regression",
+    }
+    for item in items:
+        path_parts = set(item.path.parts)
+        for marker, directory in markers.items():
+            if directory in path_parts:
+                item.add_marker(getattr(pytest.mark, marker))

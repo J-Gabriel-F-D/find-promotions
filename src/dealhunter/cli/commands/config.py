@@ -5,7 +5,7 @@ from __future__ import annotations
 import typer
 
 from dealhunter.cli.render import emit_json, envelope
-from dealhunter.runtime.config import dump_config_toml
+from dealhunter.runtime.config import dump_config_toml, mask_config_pii
 from dealhunter.runtime.container import RuntimeContext
 
 app = typer.Typer(help="Mostra e valida a configuração efetiva.", no_args_is_help=True)
@@ -32,7 +32,7 @@ def show_config(ctx: typer.Context) -> None:
             envelope(
                 "config.show",
                 generated_at=rt.clock.now().isoformat(),
-                config=rt.config.model_dump(mode="json"),
+                config=mask_config_pii(rt.config).model_dump(mode="json"),
                 files=[str(path) for path in rt.config_load.files_read],
             )
         )

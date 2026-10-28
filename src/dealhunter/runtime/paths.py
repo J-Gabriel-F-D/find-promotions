@@ -11,6 +11,7 @@ com um "perfil" isolado, ex.: ``DEALHUNTER_HOME=./.dev``).
 from __future__ import annotations
 
 import os
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -48,6 +49,11 @@ class AppPaths:
     def ensure_directories(self) -> None:
         for directory in (self.config_dir, self.data_dir, self.cache_dir, self.log_dir):
             directory.mkdir(parents=True, exist_ok=True)
+            if os.name != "nt":
+                # Dados locais (histórico, alertas, configuração) não devem ser
+                # legíveis por outros usuários da máquina.
+                with suppress(OSError):
+                    directory.chmod(0o700)
 
     def as_dict(self) -> dict[str, str]:
         return {

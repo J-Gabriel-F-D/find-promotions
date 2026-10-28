@@ -55,6 +55,7 @@ async def open_stack(
     http = HttpClient(
         user_agent=settings.user_agent,
         timeout=rt.config.search.timeout_seconds,
+        requests_per_minute=settings.requests_per_minute,
     )
     try:
         adapters, warnings = build_adapters(http, settings, clock=rt.clock)
@@ -115,6 +116,8 @@ def run_alerts_check(
                 search=stack.search,
                 notifier=stack.notifier,
                 clock=rt.clock,
+                max_per_hour=rt.config.notifications.max_per_hour,
+                max_active=rt.config.monitor.max_active_alerts,
             )
             return await service.check(alert_id)
 
