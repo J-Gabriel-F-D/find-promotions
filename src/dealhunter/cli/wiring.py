@@ -12,9 +12,19 @@ from dealhunter.adapters.notify.registry import build_notifier
 from dealhunter.adapters.sources.base import CollectorRunner
 from dealhunter.adapters.sources.registry import build_adapters
 from dealhunter.adapters.storage.repository import SqliteRepository
-from dealhunter.application.dto import HistoryReport, QuerySpec, SearchReport
+from dealhunter.application.dto import (
+    CouponCheck,
+    CouponRow,
+    HistoryReport,
+    QuerySpec,
+    SearchReport,
+)
 from dealhunter.application.use_cases.alerts import AlertOutcome, AlertService
+from dealhunter.application.use_cases.coupons import CouponService
+from dealhunter.application.use_cases.promotions import PromotionReport, PromotionService
+from dealhunter.application.use_cases.reviews import ReviewReport, ReviewService
 from dealhunter.application.use_cases.search import HistoryService, SearchService
+from dealhunter.domain.value_objects.money import Money
 from dealhunter.runtime.container import RuntimeContext
 
 
@@ -47,7 +57,7 @@ async def open_stack(
         timeout=rt.config.search.timeout_seconds,
     )
     try:
-        adapters, warnings = build_adapters(http, settings)
+        adapters, warnings = build_adapters(http, settings, clock=rt.clock)
         if not adapters:
             warnings.append("nenhuma fonte habilitada: a busca não tem de onde coletar")
 
@@ -111,3 +121,44 @@ def run_alerts_check(
     import asyncio
 
     return asyncio.run(_run())
+
+
+def run_coupons_list(
+    rt: RuntimeContext, *, store: str | None = None, include_expired: bool = False
+) -> list[CouponRow]:
+    ensure_database(rt)
+    service = CouponService(repository=SqliteRepository(rt.database), clock=rt.clock)
+    return service.list_coupons(store=store, include_expired=include_expired)
+
+
+def run_coupon_check(
+    rt: RuntimeContext,
+    code: str,
+    *,
+    price: Money,
+    shipping: Money | None = None,
+    store: str | None = None,
+) -> list[CouponCheck]:
+    ensure_database(rt)
+    service = CouponService(repository=SqliteRepository(rt.database), clock=rt.clock)
+    return service.check(code, price=price, shipping=shipping, store=store)
+
+
+def run_promotions(
+    rt: RuntimeContext,
+    *,
+    include_expired: bool = False,
+    source: str | None = None,
+    expiring_hours: int | None = None,
+) -> PromotionReport:
+    ensure_database(rt)
+    service = PromotionService(repository=SqliteRepository(rt.database), clock=rt.clock)
+    return service.list(
+        include_expired=include_expired, source=source, expiring_hours=expiring_hours
+    )
+
+
+def run_reviews(rt: RuntimeContext, term: str) -> tuple[ReviewReport | None, list[str]]:
+    ensure_database(rt)
+    service = ReviewService(repository=SqliteRepository(rt.database))
+    return service.build(term)

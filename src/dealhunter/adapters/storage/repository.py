@@ -14,8 +14,24 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 from dealhunter.adapters.storage.database import Database
-from dealhunter.application.dto import OfferRow, PriceSample, StoredAlert
-from dealhunter.domain.models import Offer, Product, Seller, Store
+from dealhunter.application.dto import (
+    CouponRow,
+    OfferRow,
+    PriceSample,
+    PromotionRow,
+    ReviewRow,
+    StoredAlert,
+)
+from dealhunter.domain.models import (
+    Coupon,
+    Offer,
+    Product,
+    Promotion,
+    ReviewSummary,
+    Seller,
+    Store,
+)
+from dealhunter.domain.value_objects.money import Money
 
 if TYPE_CHECKING:
     import sqlite3
@@ -46,6 +62,9 @@ class OfferRecord:
     seller: Seller | None
     offer: Offer
     collected: CollectedOffer | None = None
+    coupons: tuple[Coupon, ...] = ()
+    promotion: Promotion | None = None
+    reviews: ReviewSummary | None = None
 
 
 class SqliteRepository:
@@ -63,6 +82,12 @@ class SqliteRepository:
                     self._upsert_seller(connection, record.seller, stamp)
                 self._upsert_product(connection, record.product, stamp)
                 self._upsert_offer(connection, record.offer, stamp)
+                for coupon in record.coupons:
+                    self._upsert_coupon(connection, coupon, stamp)
+                if record.promotion is not None:
+                    self._upsert_promotion(connection, record.promotion, stamp)
+                if record.reviews is not None:
+                    self._upsert_review_summary(connection, record.reviews, stamp)
 
                 offer = record.offer
                 if not self._should_record_snapshot(connection, offer, now):
@@ -255,6 +280,114 @@ class SqliteRepository:
             ),
         )
 
+    def _upsert_coupon(self, connection: sqlite3.Connection, coupon: Coupon, stamp: str) -> None:
+        connection.execute(
+            """
+            INSERT INTO coupon (
+                id, store_id, code, kind, value, min_purchase_cents,
+                max_discount_cents, currency, valid_from, valid_until, source,
+                source_url, collected_at, last_verified_at, confidence
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (id) DO UPDATE SET
+                value = excluded.value,
+                min_purchase_cents = excluded.min_purchase_cents,
+                max_discount_cents = excluded.max_discount_cents,
+                valid_from = excluded.valid_from,
+                valid_until = excluded.valid_until,
+                source_url = excluded.source_url,
+                collected_at = excluded.collected_at,
+                last_verified_at = COALESCE(excluded.last_verified_at, coupon.last_verified_at),
+                confidence = excluded.confidence
+            """,
+            (
+                coupon.id,
+                coupon.store_id,
+                coupon.code,
+                coupon.kind,
+                coupon.value,
+                coupon.min_purchase.cents if coupon.min_purchase else None,
+                coupon.max_discount.cents if coupon.max_discount else None,
+                coupon.currency,
+                iso(coupon.valid_from) if coupon.valid_from else None,
+                iso(coupon.valid_until) if coupon.valid_until else None,
+                coupon.source,
+                coupon.source_url,
+                iso(coupon.collected_at or datetime.now(UTC)),
+                iso(coupon.last_verified_at) if coupon.last_verified_at else None,
+                coupon.confidence,
+            ),
+        )
+
+    def _upsert_promotion(
+        self, connection: sqlite3.Connection, promotion: Promotion, stamp: str
+    ) -> None:
+        connection.execute(
+            """
+            INSERT INTO promotion (
+                id, offer_id, kind, label, starts_at, ends_at, source,
+                source_url, collected_at, confidence
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (id) DO UPDATE SET
+                label = excluded.label,
+                starts_at = excluded.starts_at,
+                ends_at = excluded.ends_at,
+                source_url = excluded.source_url,
+                collected_at = excluded.collected_at,
+                confidence = excluded.confidence
+            """,
+            (
+                promotion.id,
+                promotion.offer_id,
+                promotion.kind,
+                promotion.label,
+                iso(promotion.starts_at) if promotion.starts_at else None,
+                iso(promotion.ends_at) if promotion.ends_at else None,
+                promotion.source,
+                promotion.source_url,
+                iso(promotion.collected_at or datetime.now(UTC)),
+                promotion.confidence,
+            ),
+        )
+
+    def _upsert_review_summary(
+        self, connection: sqlite3.Connection, reviews: ReviewSummary, stamp: str
+    ) -> None:
+        connection.execute(
+            """
+            INSERT INTO review_summary (
+                id, product_id, store_id, rating_avg, rating_count,
+                distribution_json, source, source_url, collected_at,
+                last_verified_at, confidence
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (id) DO UPDATE SET
+                rating_avg = excluded.rating_avg,
+                rating_count = excluded.rating_count,
+                distribution_json = excluded.distribution_json,
+                source_url = excluded.source_url,
+                collected_at = excluded.collected_at,
+                last_verified_at = COALESCE(
+                    excluded.last_verified_at, review_summary.last_verified_at
+                ),
+                confidence = excluded.confidence
+            """,
+            (
+                reviews.id,
+                reviews.product_id,
+                reviews.store_id,
+                reviews.rating_avg,
+                reviews.rating_count,
+                json.dumps(
+                    {str(score): count for score, count in reviews.distribution.items()},
+                    ensure_ascii=False,
+                ),
+                reviews.source,
+                reviews.source_url,
+                iso(reviews.collected_at or datetime.now(UTC)),
+                iso(reviews.last_verified_at) if reviews.last_verified_at else None,
+                reviews.confidence,
+            ),
+        )
+
     # ------------------------------------------------------------------ leitura
     def find_products(self, term: str, *, limit: int = 10) -> list[tuple[str, str]]:
         like = f"%{term.strip()}%"
@@ -388,6 +521,189 @@ class SqliteRepository:
                 collected_at=parse_iso(row["collected_at"]),
                 price_cents=row["price_cents"],
                 source=row["source"],
+            )
+            for row in rows
+        ]
+
+    # -------------------------------------------- cupons, promoções e avaliações
+    def list_coupons(
+        self,
+        *,
+        now: datetime,
+        store: str | None = None,
+        include_expired: bool = False,
+    ) -> list[CouponRow]:
+        conditions: list[str] = []
+        params: list[object] = []
+        if store:
+            like = f"%{store.strip().lower()}%"
+            conditions.append("(lower(s.name) LIKE ? OR lower(s.domain) LIKE ?)")
+            params.extend([like, like])
+        if not include_expired:
+            conditions.append("(c.valid_until IS NULL OR c.valid_until >= ?)")
+            params.append(iso(now))
+        return self._coupon_rows(conditions, params)
+
+    def find_coupons_by_code(self, code: str, *, store: str | None = None) -> list[CouponRow]:
+        conditions = ["upper(c.code) = ?"]
+        params: list[object] = [code.strip().upper()]
+        if store:
+            like = f"%{store.strip().lower()}%"
+            conditions.append("(lower(s.name) LIKE ? OR lower(s.domain) LIKE ?)")
+            params.extend([like, like])
+        return self._coupon_rows(conditions, params)
+
+    def _coupon_rows(self, conditions: Sequence[str], params: Sequence[object]) -> list[CouponRow]:
+        sql = """
+            SELECT c.*, s.name AS store_name, s.domain AS store_domain
+            FROM coupon c JOIN store s ON s.id = c.store_id
+        """
+        if conditions:
+            sql += " WHERE " + " AND ".join(conditions)
+        sql += " ORDER BY s.name, c.code, c.valid_until"
+        with self._db.connect() as connection:
+            rows = connection.execute(sql, tuple(params)).fetchall()
+        return [self._coupon_row(row) for row in rows]
+
+    @staticmethod
+    def _coupon_row(row: sqlite3.Row) -> CouponRow:
+        return CouponRow(
+            coupon=Coupon(
+                store_id=row["store_id"],
+                code=row["code"],
+                kind=row["kind"],
+                value=row["value"],
+                source=row["source"],
+                source_url=row["source_url"],
+                min_purchase=Money(row["min_purchase_cents"], row["currency"])
+                if row["min_purchase_cents"] is not None
+                else None,
+                max_discount=Money(row["max_discount_cents"], row["currency"])
+                if row["max_discount_cents"] is not None
+                else None,
+                valid_from=parse_iso(row["valid_from"]) if row["valid_from"] else None,
+                valid_until=parse_iso(row["valid_until"]) if row["valid_until"] else None,
+                collected_at=parse_iso(row["collected_at"]),
+                last_verified_at=parse_iso(row["last_verified_at"])
+                if row["last_verified_at"]
+                else None,
+                confidence=row["confidence"],
+            ),
+            store_name=row["store_name"],
+            store_domain=row["store_domain"],
+        )
+
+    def record_coupon_validation(
+        self,
+        *,
+        coupon_id: str,
+        method: str,
+        applicable: bool,
+        reason: str,
+        price_cents: int | None,
+        now: datetime,
+    ) -> int:
+        with self._db.connect() as connection:
+            cursor = connection.execute(
+                """
+                INSERT INTO coupon_validation
+                    (coupon_id, method, applicable, reason, checked_price_cents, checked_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (coupon_id, method, 1 if applicable else 0, reason, price_cents, iso(now)),
+            )
+            return int(cursor.lastrowid or 0)
+
+    def list_promotions(
+        self,
+        *,
+        now: datetime,
+        include_expired: bool = False,
+        source: str | None = None,
+        expiring_hours: int | None = None,
+    ) -> list[PromotionRow]:
+        conditions: list[str] = []
+        params: list[object] = []
+        if not include_expired:
+            conditions.append("(p.ends_at IS NULL OR p.ends_at >= ?)")
+            params.append(iso(now))
+        if source:
+            conditions.append("p.source = ?")
+            params.append(source)
+        if expiring_hours is not None:
+            conditions.append("p.ends_at IS NOT NULL AND p.ends_at >= ? AND p.ends_at <= ?")
+            params.extend([iso(now), iso(now + timedelta(hours=max(expiring_hours, 1)))])
+
+        sql = """
+            SELECT p.*, o.product_id AS product_id, o.url AS offer_url,
+                   pr.title AS product_title, s.name AS store_name
+            FROM promotion p
+            JOIN offer o ON o.id = p.offer_id
+            JOIN product pr ON pr.id = o.product_id
+            JOIN store s ON s.id = o.store_id
+        """
+        if conditions:
+            sql += " WHERE " + " AND ".join(conditions)
+        sql += " ORDER BY (p.ends_at IS NULL), p.ends_at ASC"
+
+        with self._db.connect() as connection:
+            rows = connection.execute(sql, tuple(params)).fetchall()
+        return [
+            PromotionRow(
+                promotion=Promotion(
+                    offer_id=row["offer_id"],
+                    kind=row["kind"],
+                    label=row["label"] or "",
+                    source=row["source"],
+                    source_url=row["source_url"],
+                    starts_at=parse_iso(row["starts_at"]) if row["starts_at"] else None,
+                    ends_at=parse_iso(row["ends_at"]) if row["ends_at"] else None,
+                    collected_at=parse_iso(row["collected_at"]),
+                    confidence=row["confidence"],
+                ),
+                offer_id=row["offer_id"],
+                product_id=row["product_id"],
+                product_title=row["product_title"],
+                store_name=row["store_name"],
+                offer_url=row["offer_url"],
+            )
+            for row in rows
+        ]
+
+    def reviews_for_product(self, product_id: str) -> list[ReviewRow]:
+        with self._db.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT r.*, p.title AS product_title, s.name AS store_name
+                FROM review_summary r
+                JOIN product p ON p.id = r.product_id
+                JOIN store s ON s.id = r.store_id
+                WHERE r.product_id = ?
+                ORDER BY s.name, r.collected_at DESC
+                """,
+                (product_id,),
+            ).fetchall()
+        return [
+            ReviewRow(
+                review=ReviewSummary(
+                    product_id=row["product_id"],
+                    store_id=row["store_id"],
+                    rating_avg=row["rating_avg"],
+                    rating_count=row["rating_count"],
+                    source=row["source"],
+                    source_url=row["source_url"],
+                    distribution={
+                        int(score): int(count)
+                        for score, count in json.loads(row["distribution_json"]).items()
+                    },
+                    collected_at=parse_iso(row["collected_at"]),
+                    last_verified_at=parse_iso(row["last_verified_at"])
+                    if row["last_verified_at"]
+                    else None,
+                    confidence=row["confidence"],
+                ),
+                product_title=row["product_title"],
+                store_name=row["store_name"],
             )
             for row in rows
         ]

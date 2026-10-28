@@ -25,7 +25,7 @@ class TestSearch:
         assert result.exit_code == 0, result.output
 
         payload = json.loads(result.output)
-        assert payload["schema_version"] == "1.0"
+        assert payload["schema_version"] == "1.1"
         assert payload["command"] == "search"
         assert payload["results"]
         assert payload["stats"]["collected"] >= 1
@@ -59,7 +59,8 @@ class TestSearch:
         assert payload["picks"]["cheapest"] in offer_ids
         # Fase 1 nao inventa curadorias que dependem de analise futura.
         assert payload["picks"]["safest"] is None
-        assert payload["picks"]["flash"] is None
+        # Fase 2: fixture declara uma promoção relâmpago com janela aberta.
+        assert payload["picks"]["flash"] in offer_ids
 
     def test_sem_resultado_sai_com_codigo_3(self, tmp_path: Path) -> None:
         result = _invoke(

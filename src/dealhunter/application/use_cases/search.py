@@ -18,6 +18,7 @@ from dealhunter.application.dto import HistoryPoint, HistoryReport, QuerySpec, S
 from dealhunter.domain.models import OfferView
 from dealhunter.domain.ports.clock import Clock
 from dealhunter.domain.value_objects.money import Money
+from dealhunter.services import coupons as coupon_service
 from dealhunter.services import matching, ranking
 from dealhunter.services.normalizer import ProductNormalizer
 from dealhunter.services.pricing import Sample, assess_discount, compute_stats
@@ -44,11 +45,11 @@ class SearchService:
         started = time.perf_counter()
 
         results = await self._runner.run(spec)
-        records, reasons = self._collect(spec, results)
+        records, reasons = self._collect(spec, results, started_wall)
         self._persist(records, started_wall)
 
         views = self._build_views(records, started_wall)
-        scored = ranking.score_views(views)
+        scored = ranking.score_views(views, now=started_wall)
         ordered = ranking.sort_views(scored, spec.sort)[: spec.limit]
 
         collected_total = sum(result.status.items for result in results)
@@ -61,7 +62,7 @@ class SearchService:
             collected=collected_total,
             discarded=sum(reasons.values()),
             discard_reasons=dict(reasons),
-            picks=ranking.select_picks(scored),
+            picks=ranking.select_picks(scored, now=started_wall),
             warnings=tuple(warnings),
             started_at=started_wall.astimezone(UTC).isoformat(timespec="seconds"),
             duration_ms=int((time.perf_counter() - started) * 1000),
@@ -69,7 +70,7 @@ class SearchService:
 
     # ------------------------------------------------------------------ interno
     def _collect(
-        self, spec: QuerySpec, results: Sequence[SourceResult]
+        self, spec: QuerySpec, results: Sequence[SourceResult], now: datetime
     ) -> tuple[list[OfferRecord], Counter[str]]:
         records: list[OfferRecord] = []
         reasons: Counter[str] = Counter()
@@ -81,14 +82,15 @@ class SearchService:
                     reasons[reason] += 1
                     continue
 
+                if collected.collected_at is None:
+                    collected = replace(collected, collected_at=now)
+
                 product = self._normalizer.to_product(collected)
                 store = self._normalizer.to_store(collected)
                 seller = self._normalizer.to_seller(collected, store)
                 offer = self._normalizer.to_offer(
                     collected, product=product, store=store, seller=seller
                 )
-                if offer.collected_at is None:
-                    offer = replace(offer, collected_at=self._clock.now())
 
                 records.append(
                     OfferRecord(
@@ -97,6 +99,11 @@ class SearchService:
                         seller=seller,
                         offer=offer,
                         collected=collected,
+                        coupons=self._normalizer.to_coupons(collected, store=store, now=now),
+                        promotion=self._normalizer.to_promotion(collected, offer=offer),
+                        reviews=self._normalizer.to_reviews(
+                            collected, product=product, store=store
+                        ),
                     )
                 )
         return records, reasons
@@ -140,6 +147,12 @@ class SearchService:
                 list_price=record.offer.list_price,
                 stats=stats,
             )
+            evaluations = coupon_service.evaluate_all(
+                record.coupons,
+                price=record.offer.price,
+                shipping=record.offer.shipping,
+                now=now,
+            )
             views.append(
                 OfferView(
                     offer=record.offer,
@@ -149,6 +162,10 @@ class SearchService:
                     stats=stats,
                     discount=discount,
                     deal_score=0.0,
+                    coupons=evaluations,
+                    best_coupon=coupon_service.best_evaluation(evaluations),
+                    promotion=record.promotion,
+                    reviews=record.reviews,
                 )
             )
         return views

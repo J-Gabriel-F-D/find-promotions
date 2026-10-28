@@ -15,6 +15,7 @@ from dealhunter.adapters.sources.base import SourceAdapter
 from dealhunter.adapters.sources.feed import FeedAdapter
 from dealhunter.adapters.sources.fixture import FixtureAdapter
 from dealhunter.adapters.sources.mercadolivre import MercadoLivreAdapter
+from dealhunter.domain.ports.clock import Clock
 from dealhunter.runtime.config import SourcesSettings
 
 KNOWN_SOURCES = ("mercadolivre", "feed", "fixture")
@@ -24,6 +25,7 @@ def build_adapters(
     http: HttpClient,
     settings: SourcesSettings,
     *,
+    clock: Clock | None = None,
     environ: Mapping[str, str] | None = None,
 ) -> tuple[list[SourceAdapter], list[str]]:
     """Devolve ``(adapters, avisos)`` para os IDs habilitados."""
@@ -41,7 +43,7 @@ def build_adapters(
             token = environ.get(settings.mercadolivre_token_env) or None
             adapters.append(MercadoLivreAdapter(http, access_token=token))
         elif source_id == "fixture":
-            adapters.append(FixtureAdapter())
+            adapters.append(FixtureAdapter(clock=clock))
         elif source_id == "feed":
             if not settings.feed_urls:
                 warnings.append("fonte 'feed' habilitada sem 'feed_urls' configuradas")

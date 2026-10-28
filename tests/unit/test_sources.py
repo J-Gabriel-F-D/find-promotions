@@ -189,6 +189,81 @@ class TestFeed:
             _run_feed(FEED_PAYLOAD, robots=RobotsFake())
 
 
+def test_feed_declara_cupons_promocao_e_avaliacoes() -> None:
+    payload = {
+        "offers": [
+            {
+                "title": "Xiaomi Redmi Note 14 256GB",
+                "url": "https://loja.example/produto/1",
+                "price": "1649.90",
+                "store": "Loja Exemplo",
+                "store_domain": "loja.example",
+                "coupons": [
+                    {
+                        "code": "BEMVINDO10",
+                        "kind": "percent",
+                        "value": 10,
+                        "min_purchase": "1500",
+                        "valid_until": "2026-12-31",
+                    },
+                    {"code": "INVALIDO", "kind": "percent", "value": 0},
+                    {"code": "", "kind": "fixed", "value": 5},
+                ],
+                "promotion": {
+                    "kind": "flash",
+                    "label": "Relâmpago",
+                    "ends_at": "2026-03-16T12:00:00Z",
+                },
+                "reviews": {
+                    "rating": 4.6,
+                    "count": 100,
+                    "distribution": {"5": 80, "4": 15, "1": 2},
+                },
+            }
+        ]
+    }
+    offers = _run_feed(payload)
+    assert len(offers) == 1
+    offer = offers[0]
+
+    assert len(offer.coupons) == 1
+    coupon = offer.coupons[0]
+    assert coupon.code == "BEMVINDO10"
+    assert coupon.kind == "percent"
+    assert coupon.value == 10
+    assert coupon.min_purchase_cents == 150_000
+    assert coupon.valid_until is not None
+    assert coupon.valid_until.hour == 23
+    assert coupon.valid_until.minute == 59
+
+    assert offer.promotion is not None
+    assert offer.promotion.kind == "flash"
+    assert offer.promotion.ends_at is not None
+
+    assert offer.reviews is not None
+    assert offer.reviews.rating == 4.6
+    assert offer.reviews.count == 100
+    assert offer.reviews.distribution == {5: 80, 4: 15, 1: 2}
+
+
+def test_feed_sem_cupom_valido_nao_quebra() -> None:
+    payload = {
+        "offers": [
+            {
+                "title": "Produto",
+                "url": "https://loja.example/p",
+                "price": 100,
+                "coupons": [{"code": "X", "kind": "desconhecido", "value": 1}],
+                "reviews": {"rating": 9, "count": 10},
+            }
+        ]
+    }
+    offers = _run_feed(payload)
+    assert len(offers) == 1
+    assert offers[0].coupons == ()
+    assert offers[0].reviews is None
+
+
 class TestFixture:
     def test_filtra_por_capacidade(self) -> None:
         offers = asyncio.run(FixtureAdapter().search(QuerySpec(product="redmi", storage_gb=256)))
@@ -209,5 +284,7 @@ class TestFixture:
     def test_dados_sao_marcados_como_demonstracao(self) -> None:
         offers = asyncio.run(FixtureAdapter().search(QuerySpec(product="redmi")))
         assert offers
-        assert all(offer.store_domain == "demo.local" for offer in offers)
+        assert all(
+            offer.store_domain and offer.store_domain.endswith(".demo.local") for offer in offers
+        )
         assert all(offer.confidence <= 0.4 for offer in offers)

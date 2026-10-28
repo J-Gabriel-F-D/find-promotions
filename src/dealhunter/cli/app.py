@@ -17,10 +17,13 @@ from rich.console import Console
 from dealhunter import __version__
 from dealhunter.cli.commands import alerts as alerts_cmd
 from dealhunter.cli.commands import config as config_cmd
+from dealhunter.cli.commands import coupons as coupons_cmd
 from dealhunter.cli.commands import db as db_cmd
 from dealhunter.cli.commands import notify as notify_cmd
 from dealhunter.cli.commands import sources as sources_cmd
 from dealhunter.cli.commands.history import history_command
+from dealhunter.cli.commands.promotions import promotions_command
+from dealhunter.cli.commands.reviews import reviews_command
 from dealhunter.cli.commands.search import search_command
 from dealhunter.cli.commands.status import status_command
 from dealhunter.cli.exit_codes import ExitCode
@@ -46,11 +49,16 @@ app.add_typer(db_cmd.app, name="db")
 app.add_typer(alerts_cmd.app, name="alerts")
 app.add_typer(notify_cmd.app, name="notify")
 app.add_typer(sources_cmd.app, name="sources")
+app.add_typer(coupons_cmd.app, name="coupons")
 app.command("status", help="Diagnóstico do ambiente local (versão, banco, fontes, IA).")(
     status_command
 )
 app.command("search", help="Busca ofertas nas fontes habilitadas.")(search_command)
 app.command("history", help="Histórico de preços e estatísticas de um produto.")(history_command)
+app.command("promotions", help="Promoções com janela temporal coletadas nas buscas.")(
+    promotions_command
+)
+app.command("reviews", help="Agregado de avaliações publicado pela fonte.")(reviews_command)
 
 
 def _print_version() -> None:

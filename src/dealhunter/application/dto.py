@@ -8,7 +8,15 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from dealhunter.domain.models import OfferView, PriceStats, SourceStatus
+from dealhunter.domain.models import (
+    Coupon,
+    CouponEvaluation,
+    OfferView,
+    PriceStats,
+    Promotion,
+    ReviewSummary,
+    SourceStatus,
+)
 from dealhunter.domain.value_objects.money import Money
 
 SortMode = Literal["best", "price", "reputation"]
@@ -175,3 +183,41 @@ class HistoryReport:
     offers: tuple[OfferRow, ...]
     days: int
     warnings: tuple[str, ...] = field(default_factory=tuple)
+
+
+@dataclass(frozen=True, slots=True)
+class CouponRow:
+    """Cupom persistido + dados de exibição da loja."""
+
+    coupon: Coupon
+    store_name: str
+    store_domain: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class PromotionRow:
+    """Promoção persistida + oferta/produto/loja para exibição."""
+
+    promotion: Promotion
+    offer_id: str
+    product_id: str
+    product_title: str
+    store_name: str
+    offer_url: str
+
+
+@dataclass(frozen=True, slots=True)
+class ReviewRow:
+    review: ReviewSummary
+    product_title: str
+    store_name: str
+
+
+@dataclass(frozen=True, slots=True)
+class CouponCheck:
+    """Resultado de simular um cupom sobre um preço informado pelo usuário."""
+
+    coupon: Coupon
+    store_name: str
+    store_domain: str | None
+    evaluation: CouponEvaluation

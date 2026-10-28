@@ -14,7 +14,7 @@ def test_migrate_cria_schema(tmp_path: Path) -> None:
     result = database.migrate()
     assert "0001_init" in result.applied
     assert "0002_mvp" in result.applied
-    assert database.schema_version() == "0002_mvp"
+    assert database.schema_version() == "0003_fase2"
     assert database.integrity_check() is True
 
 

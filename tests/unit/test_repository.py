@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 import pytest
 
 from dealhunter.adapters.storage.database import Database
 from dealhunter.adapters.storage.repository import SqliteRepository
+from dealhunter.domain.models import Coupon, Promotion, ReviewSummary
+from dealhunter.domain.value_objects.money import Money
 
 
 class TestPersistencia:
@@ -122,6 +125,169 @@ class TestPersistencia:
         resolved = repo.offer_product(record.offer.id)
         assert resolved is not None
         assert resolved[0] == record.product.id
+
+
+class TestCuponsPromocoesAvaliacoes:
+    def _record(
+        self,
+        make_offer_record,
+        clock,
+        *,
+        valid_until: datetime | None = None,
+        store_name: str = "Loja Teste",
+        store_domain: str = "loja.example",
+        url: str = "https://loja.example/persistencia/redmi",
+    ):
+        base = make_offer_record(
+            price_cents=150_000,
+            url=url,
+            store_name=store_name,
+            store_domain=store_domain,
+        )
+        coupon = Coupon(
+            store_id=base.store.id,
+            code="X10",
+            kind="percent",
+            value=10,
+            source="fixture",
+            source_url=base.offer.source_url,
+            min_purchase=Money(100_000),
+            valid_until=valid_until or clock.now() + timedelta(days=7),
+            collected_at=clock.now(),
+        )
+        promotion = Promotion(
+            offer_id=base.offer.id,
+            kind="flash",
+            label="Relâmpago",
+            source="fixture",
+            source_url=base.offer.source_url,
+            ends_at=clock.now() + timedelta(hours=2),
+            collected_at=clock.now(),
+        )
+        reviews = ReviewSummary(
+            product_id=base.product.id,
+            store_id=base.store.id,
+            rating_avg=4.6,
+            rating_count=100,
+            source="fixture",
+            source_url=base.offer.source_url,
+            distribution={5: 80, 4: 15, 3: 3, 2: 1, 1: 1},
+            collected_at=clock.now(),
+        )
+        return replace(base, coupons=(coupon,), promotion=promotion, reviews=reviews)
+
+    def test_persiste_e_le_cupom_promocao_e_avaliacoes(
+        self, database: Database, make_offer_record, clock
+    ) -> None:
+        repo = SqliteRepository(database)
+        record = self._record(make_offer_record, clock)
+        repo.save_batch([record], now=clock.now())
+
+        coupons = repo.list_coupons(now=clock.now())
+        assert len(coupons) == 1
+        assert coupons[0].coupon.code == "X10"
+        assert coupons[0].coupon.state_at(clock.now()) == "active"
+        assert coupons[0].store_name == record.store.name
+
+        promotions = repo.list_promotions(now=clock.now())
+        assert len(promotions) == 1
+        assert promotions[0].promotion.kind == "flash"
+        assert promotions[0].product_id == record.product.id
+
+        reviews = repo.reviews_for_product(record.product.id)
+        assert len(reviews) == 1
+        assert reviews[0].review.rating_count == 100
+        assert reviews[0].review.distribution[5] == 80
+
+    def test_cupom_e_idempotente_por_loja_e_codigo(
+        self, database: Database, make_offer_record, clock
+    ) -> None:
+        repo = SqliteRepository(database)
+        first = self._record(make_offer_record, clock)
+        repo.save_batch([first], now=clock.now())
+
+        later = self._record(make_offer_record, clock, valid_until=clock.now() + timedelta(days=30))
+        # Nova coleta atualiza a janela em vez de criar um cupom duplicado.
+        repo.save_batch([later], now=clock.now())
+        coupons = repo.list_coupons(now=clock.now(), include_expired=True)
+        assert len(coupons) == 1
+        assert coupons[0].coupon.valid_until is not None
+        assert coupons[0].coupon.valid_until > clock.now() + timedelta(days=20)
+
+    def test_avaliacoes_de_lojas_diferentes_nao_se_sobrescrevem(
+        self, database: Database, make_offer_record, clock
+    ) -> None:
+        repo = SqliteRepository(database)
+        first = self._record(
+            make_offer_record,
+            clock,
+            store_name="Loja A",
+            store_domain="a.example",
+            url="https://a.example/redmi",
+        )
+        second = self._record(
+            make_offer_record,
+            clock,
+            store_name="Loja B",
+            store_domain="b.example",
+            url="https://b.example/redmi",
+        )
+        assert first.product.id == second.product.id
+
+        repo.save_batch([first, second], now=clock.now())
+        rows = repo.reviews_for_product(first.product.id)
+        assert len(rows) == 2
+        assert {row.store_name for row in rows} == {"Loja A", "Loja B"}
+        assert {row.review.store_id for row in rows} == {first.store.id, second.store.id}
+
+    def test_busca_cupom_por_codigo_ignora_caixa(
+        self, database: Database, make_offer_record, clock
+    ) -> None:
+        repo = SqliteRepository(database)
+        repo.save_batch([self._record(make_offer_record, clock)], now=clock.now())
+        found = repo.find_coupons_by_code("x10")
+        assert len(found) == 1
+
+    def test_registra_simulacao_local_sem_erro_de_fk(
+        self, database: Database, make_offer_record, clock
+    ) -> None:
+        repo = SqliteRepository(database)
+        record = self._record(make_offer_record, clock)
+        repo.save_batch([record], now=clock.now())
+        coupon = repo.list_coupons(now=clock.now())[0].coupon
+
+        repo.record_coupon_validation(
+            coupon_id=coupon.id,
+            method="local_rules",
+            applicable=True,
+            reason="teste",
+            price_cents=150_000,
+            now=clock.now(),
+        )
+        with database.connect() as connection:
+            total = connection.execute("SELECT COUNT(*) FROM coupon_validation").fetchone()[0]
+        assert total == 1
+
+    def test_cupom_expirado_so_aparece_com_all(
+        self, database: Database, make_offer_record, clock
+    ) -> None:
+        repo = SqliteRepository(database)
+        record = self._record(make_offer_record, clock)
+        repo.save_batch([record], now=clock.now())
+
+        later = clock.now() + timedelta(days=10)
+        assert repo.list_coupons(now=later) == []
+        assert len(repo.list_coupons(now=later, include_expired=True)) == 1
+
+    def test_promocao_encerrada_so_aparece_com_all(
+        self, database: Database, make_offer_record, clock
+    ) -> None:
+        repo = SqliteRepository(database)
+        repo.save_batch([self._record(make_offer_record, clock)], now=clock.now())
+
+        later = clock.now() + timedelta(days=1)
+        assert repo.list_promotions(now=later) == []
+        assert len(repo.list_promotions(now=later, include_expired=True)) == 1
 
 
 class TestAlertas:

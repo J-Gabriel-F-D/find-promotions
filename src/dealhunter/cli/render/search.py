@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 
 from rich import box
@@ -11,8 +12,10 @@ from rich.table import Table
 
 from dealhunter.application.dto import SearchReport
 from dealhunter.cli.render import envelope
-from dealhunter.domain.models import OfferView
+from dealhunter.domain.models import CouponEvaluation, OfferView
 from dealhunter.runtime.container import RuntimeContext
+from dealhunter.services import coupons as coupon_rules
+from dealhunter.services import promotions as promotion_rules
 
 DISCOUNT_LABELS = {
     "likely_real": ("provavelmente real", "green"),
@@ -25,10 +28,20 @@ FLAG_LABELS = {
     "frete_nao_informado": "frete não informado",
     "historico_insuficiente": "histórico insuficiente",
     "reputacao_desconhecida": "reputação desconhecida",
+    "cupom_nao_validado": "cupom não validado na loja",
+    "promocao_sem_janela": "promoção sem janela declarada",
 }
 
 
+def _now(report: SearchReport) -> datetime:
+    if report.started_at:
+        parsed = datetime.fromisoformat(report.started_at)
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+    return datetime.now(UTC)
+
+
 def search_payload(report: SearchReport) -> dict[str, Any]:
+    now = _now(report)
     return envelope(
         "search",
         generated_at=report.started_at,
@@ -53,13 +66,43 @@ def search_payload(report: SearchReport) -> dict[str, Any]:
             "discard_reasons": report.discard_reasons,
             "duration_ms": report.duration_ms,
         },
-        results=[offer_payload(view) for view in report.views],
+        results=[offer_payload(view, now=now) for view in report.views],
         warnings=list(report.warnings),
     )
 
 
-def offer_payload(view: OfferView) -> dict[str, Any]:
+def coupon_payload(evaluation: CouponEvaluation, *, now: datetime) -> dict[str, Any]:
+    coupon = evaluation.coupon
+    return {
+        "code": coupon.code,
+        "kind": coupon.kind,
+        "value": coupon.value,
+        "benefit": coupon_rules.describe_benefit(coupon),
+        "min_purchase_cents": coupon.min_purchase.cents if coupon.min_purchase else None,
+        "max_discount_cents": coupon.max_discount.cents if coupon.max_discount else None,
+        "valid_from": coupon.valid_from.isoformat() if coupon.valid_from else None,
+        "valid_until": coupon.valid_until.isoformat() if coupon.valid_until else None,
+        "state": coupon.state_at(now),
+        "validation": coupon.validation,
+        "last_verified_at": (
+            coupon.last_verified_at.isoformat() if coupon.last_verified_at else None
+        ),
+        "applicable": evaluation.applicable,
+        "reason": evaluation.reason,
+        "estimated_discount_cents": evaluation.discount.cents,
+        "estimated_final_price_cents": evaluation.final_price.cents,
+        "estimate": evaluation.estimate,
+        "source": coupon.source,
+        "source_url": coupon.source_url,
+        "collected_at": coupon.collected_at.isoformat() if coupon.collected_at else None,
+        "confidence": coupon.confidence,
+    }
+
+
+def offer_payload(view: OfferView, *, now: datetime | None = None) -> dict[str, Any]:
+    now = now or datetime.now(UTC)
     offer, product, stats = view.offer, view.product, view.stats
+    best = view.best_coupon
     return {
         "offer_id": offer.id,
         "product_id": product.id,
@@ -76,9 +119,52 @@ def offer_payload(view: OfferView) -> dict[str, Any]:
         "list_price_cents": offer.list_price.cents if offer.list_price else None,
         "shipping_cents": offer.shipping.cents if offer.shipping is not None else None,
         "final_price_cents": offer.final_price.cents,
+        "estimated_final_price_with_coupon_cents": best.final_price.cents if best else None,
         "currency": offer.price.currency,
         "coupon": offer.coupon_code,
+        "coupons": [coupon_payload(item, now=now) for item in view.coupons],
+        "best_coupon": coupon_payload(best, now=now) if best else None,
+        "promotion": (
+            {
+                "kind": view.promotion.kind,
+                "label": view.promotion.label,
+                "starts_at": (
+                    view.promotion.starts_at.isoformat() if view.promotion.starts_at else None
+                ),
+                "ends_at": (view.promotion.ends_at.isoformat() if view.promotion.ends_at else None),
+                "state": view.promotion.state_at(now),
+                "urgency": promotion_rules.urgency(view.promotion, now),
+                "remaining": promotion_rules.remaining_label(view.promotion, now),
+                "source": view.promotion.source,
+                "source_url": view.promotion.source_url,
+                "collected_at": (
+                    view.promotion.collected_at.isoformat() if view.promotion.collected_at else None
+                ),
+                "confidence": view.promotion.confidence,
+            }
+            if view.promotion
+            else None
+        ),
+        "reviews": (
+            {
+                "rating": view.reviews.rating_avg,
+                "count": view.reviews.rating_count,
+                "distribution": {
+                    str(score): count for score, count in sorted(view.reviews.distribution.items())
+                },
+                "negative_share": view.reviews.negative_share,
+                "source": view.reviews.source,
+                "source_url": view.reviews.source_url,
+                "collected_at": (
+                    view.reviews.collected_at.isoformat() if view.reviews.collected_at else None
+                ),
+                "confidence": view.reviews.confidence,
+            }
+            if view.reviews
+            else None
+        ),
         "deal_score": view.deal_score,
+        "score_breakdown": view.score_breakdown,
         "discount": {
             "classification": view.discount.classification,
             "evidence": view.discount.evidence,
@@ -131,7 +217,7 @@ def _source_lines(report: SearchReport, rt: RuntimeContext) -> Table:
     return table
 
 
-def _offer_card(view: OfferView, rt: RuntimeContext, badges: list[str]) -> Panel:
+def _offer_card(view: OfferView, rt: RuntimeContext, badges: list[str], now: datetime) -> Panel:
     glyphs = rt.glyphs
     offer, stats = view.offer, view.stats
     title = f"[bold]{escape(view.product.title)}[/bold]"
@@ -175,9 +261,45 @@ def _offer_card(view: OfferView, rt: RuntimeContext, badges: list[str]) -> Panel
         f"Desconto: [{color}]{label}[/{color}] [dim]({escape(view.discount.evidence)})[/dim]"
     )
 
+    if view.promotion is not None and view.promotion.state_at(now) == "active":
+        promo_label = view.promotion.label or "promoção ativa"
+        remaining = promotion_rules.remaining_label(view.promotion, now)
+        suffix = f" [dim]· {remaining}[/dim]" if remaining else ""
+        lines.append(f"{glyphs.fire} [bold yellow]{escape(promo_label)}[/bold yellow]{suffix}")
+        lines.append("[dim]janela declarada pela fonte; urgência não indica confiabilidade[/dim]")
+    elif view.promotion is not None:
+        state = view.promotion.state_at(now)
+        if state == "expired":
+            lines.append(f"[dim]{glyphs.clock} promoção declarada já encerrada[/dim]")
+        elif state == "scheduled":
+            lines.append(f"[dim]{glyphs.clock} promoção agendada (ainda não vigente)[/dim]")
+
+    if view.best_coupon is not None:
+        best = view.best_coupon
+        lines.append(
+            f"{glyphs.tag} cupom [bold]{escape(best.coupon.code)}[/bold] "
+            f"({coupon_rules.describe_benefit(best.coupon)}) "
+            f"{glyphs.arrow} estimado [bold green]{best.final_price}[/bold green] "
+            "[dim](não validado na loja)[/dim]"
+        )
+    elif view.coupons:
+        first = view.coupons[0]
+        lines.append(
+            f"{glyphs.tag} cupom [bold]{escape(first.coupon.code)}[/bold]: "
+            f"[dim]{escape(first.reason)}[/dim]"
+        )
+
+    if view.reviews is not None:
+        rating = f"{view.reviews.rating_avg:.1f}".replace(".", ",")
+        lines.append(
+            f"{glyphs.star} {rating}/5 em {view.reviews.rating_count} avaliações "
+            f"[dim](agregado da fonte)[/dim]"
+        )
+
     lines.append(
         f"{glyphs.target} oportunidade [bold]{view.deal_score:.0f}/100[/bold] "
-        "[dim](preço/frete/histórico; não é score de confiança)[/dim]"
+        "[dim](preço/desconto/frete/histórico/avaliações/urgência; "
+        "não é score de confiança)[/dim]"
     )
 
     flags = [FLAG_LABELS.get(flag, flag) for flag in view.flags]
@@ -232,12 +354,15 @@ def render_search(report: SearchReport, rt: RuntimeContext) -> None:
         return
 
     console.print()
+    now = _now(report)
     for index, view in enumerate(report.views, start=1):
         badges: list[str] = []
         if report.picks.get("best") == view.offer.id:
             badges.append(f"{glyphs.trophy} MELHOR OFERTA")
         if report.picks.get("cheapest") == view.offer.id:
             badges.append(f"{glyphs.money} MENOR PREÇO")
+        if report.picks.get("flash") == view.offer.id:
+            badges.append(f"{glyphs.fire} RELÂMPAGO")
         if not badges:
             badges.append(f"#{index}")
-        console.print(_offer_card(view, rt, badges))
+        console.print(_offer_card(view, rt, badges, now))

@@ -8,7 +8,7 @@ from typing import Any
 
 from dealhunter.cli.exit_codes import ExitCode
 
-SCHEMA_VERSION = "1.0"
+SCHEMA_VERSION = "1.1"
 
 
 def emit_json(payload: dict[str, Any], *, stream: Any = None) -> None:
