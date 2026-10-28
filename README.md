@@ -13,7 +13,7 @@ Roda no terminal, sem servidor, sem Docker, sem dashboard web.
 |---|---|---|
 | **0 — Fundação** | Estrutura, configuração, logging, banco + migrações, container, CLI base, `--json`, exit codes | ✅ concluída |
 | **1 — MVP** | `search`, fontes (Mercado Livre + feed + fixture), normalização/dedupe, histórico, `alerts`, e-mail | ✅ concluída |
-| 2 — Ofertas | cupons, promoções, ranking por promoção, avaliações | ⏳ |
+| **2 — Ofertas** | cupons, promoções, ranking por promoção, avaliações | ✅ concluída |
 | 3 — Confiança | antifraude, score de confiança, falso desconto, reclamações, `interactive` | ⏳ |
 | 4 — Automação | `monitor` contínuo, WhatsApp/SMS, alertas inteligentes | ⏳ |
 
@@ -29,12 +29,31 @@ Decisões aprovadas: **Python 3.12+** · **Mercado Livre (API oficial) + fixture
 - Ranqueia e destaca **melhor oferta** e **menor preço**.
 - Cria alertas de preço, verifica e notifica por console ou e-mail, com **deduplicação** por faixa de preço.
 
-### O que a Fase 1 ainda NÃO faz (de propósito)
+### O que a Fase 2 adiciona
 
-- Não calcula **score de confiança/antifraude** — isso é a Fase 3. O `deal_score` exibido é de **oportunidade** (preço/frete/histórico), e a interface diz isso explicitamente.
-- `picks.safest` e `picks.flash` vêm `null`: dependem de análise de risco e de janela de promoção.
+- **Cupons** declarados pelas fontes: percentual, valor fixo ou frete grátis, com mínimo, teto e janela de validade.
+  `coupons list` mostra os cupons conhecidos; `coupons check` simula a aplicação sobre um preço.
+- **Promoções** com janela temporal (`flash`, `regular`, `clearance`). O pick `flash` só é preenchido
+  quando a fonte declarou uma promoção `flash` com janela **aberta**.
+- **Ranking por promoção**: o `deal_score` agora pondera preço, desconto corroborado, frete, reputação,
+  histórico, avaliações e urgência — e expõe cada parcela em `score_breakdown`.
+- **Avaliações**: agregado publicado pela fonte (nota, quantidade e distribuição) em `reviews` e nos cards.
+
+Limite explícito: cupom continua sendo **declaração da fonte**, não validação. Veja
+[Cupons e promoções](#cupons-e-promoções-o-que-é-e-não-é-validado).
+
+### Limites atuais (Fases 1–2)
+
+- Não calcula **score de confiança/antifraude** — isso é a Fase 3. O `deal_score` exibido é de
+  **oportunidade** (preço/desconto/frete/histórico/avaliações/urgência), e a interface diz isso.
+- `picks.safest` continua `null`: depende da análise de risco da Fase 3.
+- `picks.flash` só existe quando a fonte declara promoção do tipo `flash` com janela aberta;
+  promoção `regular` não recebe o selo "relâmpago".
+- **Nenhum cupom é validado na loja** nesta fase. `validation` é sempre `unverified` e
+  `last_verified_at` fica `null`; o Mercado Livre não expõe API pública de cupons.
+- Avaliações são apenas o **agregado da fonte**. Análise de sentimento/reclamações é Fase 3.
 - Não faz scraping de HTML de lojas. Novas lojas entram por **feed JSON documentado** ou API oficial.
-- A fonte `fixture` é **demonstração offline**: preços fictícios, marcados como tal em toda saída.
+- A fonte `fixture` é **demonstração offline**: preços, cupons e promoções fictícios, marcados em toda saída.
 
 ---
 
@@ -125,6 +144,42 @@ dealhunter notify test --channel console
 
 E-mail usa SMTP (`smtplib`). A senha vem de `DEALHUNTER_SMTP_PASSWORD` — nunca do TOML.
 
+### Cupons
+
+```bash
+dealhunter coupons list                     # cupons conhecidos (exclui expirados)
+dealhunter coupons list --all               # inclui expirados
+dealhunter coupons list --store aurora
+dealhunter coupons check AURORA10 --price 1649
+dealhunter coupons check AURORA10 --price 1649 --shipping 0 --store aurora
+```
+
+`coupons check` é uma **simulação local**: aplica as regras (mínimo, teto, validade, tipo) e
+mostra o total estimado. O resultado é gravado em `coupon_validation` com
+`method="local_rules"`; não é uma confirmação da loja.
+
+### Promoções
+
+```bash
+dealhunter promotions                        # promoções ainda não encerradas
+dealhunter promotions --expiring-in 6        # termina nas próximas 6 horas
+dealhunter promotions --all --source fixture
+```
+
+Cada linha mostra tipo (`relâmpago`, `regular`, `liquidação`), janela e situação. A urgência
+é só um sinal de tempo — não indica desconto real nem confiabilidade.
+
+### Avaliações
+
+```bash
+dealhunter reviews "redmi note 14"          # por termo (usa o produto mais recente)
+dealhunter reviews prd_1a2b3c4d5e6f7890     # por ID do produto
+dealhunter reviews off_1a2b3c4d5e6f7890     # por ID da oferta
+```
+
+Mostra média, quantidade e distribuição por estrelas publicadas pela fonte. Sem IA e sem
+texto inventado; `--json` inclui `negative_share` e a data da coleta.
+
 ### Fontes
 
 ```bash
@@ -141,7 +196,7 @@ dealhunter --json search "redmi note 14 256gb" --source fixture
 
 ```json
 {
-  "schema_version": "1.0",
+  "schema_version": "1.1",
   "command": "search",
   "generated_at": "2026-10-28T14:02:11+00:00",
   "query": {
@@ -149,33 +204,69 @@ dealhunter --json search "redmi note 14 256gb" --source fixture
     "spec": { "product": "redmi note 14", "brand": "xiaomi", "storage_gb": 256, "max_price_cents": 180000 }
   },
   "sources": [{ "id": "fixture", "status": "ok", "items": 3, "discarded": 0, "duration_ms": 0 }],
-  "picks": { "best": "off_...", "cheapest": "off_...", "safest": null, "flash": null },
+  "picks": { "best": "off_...", "cheapest": "off_...", "safest": null, "flash": "off_..." },
   "stats": { "collected": 3, "eligible": 3, "discarded": 0, "discard_reasons": {}, "duration_ms": 33 },
   "results": [
     {
       "offer_id": "off_...",
       "product_id": "prd_...",
-      "title": "Smartphone Xiaomi Redmi Note 14 256GB",
+      "title": "Xiaomi Redmi Note 14 256GB 8GB RAM 5G",
       "brand": "xiaomi",
       "storage_gb": 256,
       "ram_gb": 8,
       "identity": "model",
-      "store": { "name": "ImportaFacil", "domain": "demo.local" },
-      "seller": { "name": "ImportaFacil", "rating": 3.9 },
-      "price_cents": 149900,
-      "list_price_cents": 249900,
-      "shipping_cents": 4900,
-      "final_price_cents": 154800,
+      "store": { "name": "Loja Aurora", "domain": "loja-aurora.demo.local" },
+      "seller": { "name": "Aurora Oficial", "rating": 4.8 },
+      "price_cents": 164900,
+      "list_price_cents": 199900,
+      "shipping_cents": 0,
+      "final_price_cents": 164900,
+      "estimated_final_price_with_coupon_cents": 148410,
       "currency": "BRL",
-      "deal_score": 85.3,
-      "discount": { "classification": "suspicious", "evidence": "desconto anunciado não corroborado: ..." },
-      "history": {
-        "samples": 12, "days_covered": 60, "average_cents": 174408, "median_cents": 174945,
-        "min_cents": 149900, "max_cents": 197900, "position_pct": 8.3,
-        "sufficient": true, "discount_vs_average_pct": 14.1
+      "coupon": null,
+      "coupons": [
+        {
+          "code": "AURORA10",
+          "kind": "percent",
+          "value": 10,
+          "benefit": "10% de desconto",
+          "min_purchase_cents": 150000,
+          "max_discount_cents": 20000,
+          "valid_until": "2026-11-04T12:00:00+00:00",
+          "state": "active",
+          "validation": "unverified",
+          "last_verified_at": null,
+          "applicable": true,
+          "reason": "aplicável (estimativa não validada)",
+          "estimated_discount_cents": 16490,
+          "estimated_final_price_cents": 148410,
+          "estimate": true,
+          "source": "fixture",
+          "source_url": "https://aurora.demo.local/redmi-note-14-256",
+          "collected_at": "2026-10-28T12:40:44+00:00",
+          "confidence": 0.4
+        }
+      ],
+      "best_coupon": { "code": "AURORA10", "validation": "unverified", "applicable": true,
+                       "estimated_discount_cents": 16490, "estimated_final_price_cents": 148410 },
+      "promotion": {
+        "kind": "flash", "label": "Relâmpago Aurora", "state": "active", "urgency": 85.0,
+        "remaining": "termina em 2h57", "ends_at": "2026-10-28T15:40:44+00:00",
+        "source": "fixture", "confidence": 0.4
       },
-      "flags": [],
-      "url": "https://demo.local/importafacil/redmi-note-14-256",
+      "reviews": {
+        "rating": 4.7, "count": 213,
+        "distribution": { "1": 2, "2": 4, "3": 9, "4": 38, "5": 160 },
+        "negative_share": 0.028, "source": "fixture", "confidence": 0.4
+      },
+      "deal_score": 69.2,
+      "score_breakdown": {
+        "price": 41.2, "discount": 60.0, "shipping": 100.0, "reputation": 96.0,
+        "history": 58.3, "reviews": 94.0, "urgency": 85.0, "total": 69.2
+      },
+      "discount": { "classification": "normal", "evidence": "preço dentro da faixa habitual (...)" },
+      "flags": ["cupom_nao_validado"],
+      "url": "https://aurora.demo.local/redmi-note-14-256",
       "source": "fixture",
       "collected_at": "2026-10-28T14:02:11+00:00",
       "confidence": 0.4
@@ -184,6 +275,15 @@ dealhunter --json search "redmi note 14 256gb" --source fixture
   "warnings": ["Dados de demonstração (fonte 'fixture') incluídos: ..."]
 }
 ```
+
+`best_coupon` tem o mesmo formato de um item de `coupons`, resumido acima. Os campos
+`estimated_final_price_with_coupon_cents` e `estimated_*` são **estimativas** e nunca
+substituem `final_price_cents`, que é o preço confirmado sem cupom.
+
+`schema_version` passou de `1.0` para `1.1` na Fase 2 de forma **aditiva**: campos novos
+(`coupons`, `best_coupon`, `promotion`, `reviews`, `score_breakdown`) e `picks.flash`
+preenchido quando existe promoção `flash` com janela aberta. Consumidores que ignoram campos
+desconhecidos continuam funcionando.
 
 O histograma de preços **não** é inflado por rechecagens: a mesma oferta com o mesmo preço
 gera no máximo uma amostra por hora (mudança de preço é sempre registrada).
@@ -267,11 +367,46 @@ Uma loja entra sem código novo se expuser um JSON neste formato:
       "brand": "Xiaomi",
       "gtin": "7891234567895",
       "condition": "new",
-      "availability": "in_stock"
+      "availability": "in_stock",
+      "coupons": [
+        {
+          "code": "BEMVINDO10",
+          "kind": "percent",
+          "value": 10,
+          "min_purchase": "1500",
+          "max_discount": "200",
+          "valid_from": "2026-10-01",
+          "valid_until": "2026-12-31"
+        }
+      ],
+      "promotion": {
+        "kind": "flash",
+        "label": "Relâmpago da loja",
+        "starts_at": "2026-10-28T12:00:00-03:00",
+        "ends_at": "2026-10-28T18:00:00-03:00"
+      },
+      "reviews": {
+        "rating": 4.6,
+        "count": 213,
+        "distribution": { "1": 2, "2": 4, "3": 9, "4": 38, "5": 160 }
+      }
     }
   ]
 }
 ```
+
+Regras do que o feed pode declarar:
+
+- `coupons[].kind`: `percent` (`value` = pontos percentuais), `fixed` (`value` = centavos) ou
+  `free_shipping` (`value` = 0). `min_purchase` e `max_discount` são em reais, como `price`.
+- `valid_from`/`valid_until` aceitam ISO-8601 com fuso ou `AAAA-MM-DD`; data pura em
+  `valid_until` vale até o fim do dia (UTC).
+- `promotion.kind`: `flash`, `regular` ou `clearance`. Sem `starts_at`/`ends_at`, a promoção
+  é registrada como "sem janela". Só `flash` com janela aberta concorre ao pick relâmpago.
+- `reviews` é apenas o **agregado** publicado pela loja; a ferramenta não inventa texto,
+  nem deriva sentimento a partir disso.
+- Campos desconhecidos, cupons inválidos ou avaliações fora de 0–5 são ignorados sem
+  derrubar a coleta.
 
 `robots.txt` é consultado e respeitado antes de acessar o feed.
 
@@ -293,6 +428,47 @@ Sem histórico, a resposta é **"sem evidência suficiente"**; nunca um chute.
 
 ---
 
+## Cupons e promoções: o que é (e não é) validado
+
+Um cupom coletado é uma **declaração da fonte**, não um fato confirmado. Por isso:
+
+| Campo | Significado |
+|---|---|
+| `validation` | `unverified` na Fase 2 — nenhuma confirmação junto à loja é feita |
+| `last_verified_at` | `null` enquanto não houver confirmação da loja |
+| `estimate` | sempre `true` nos cálculos locais |
+| `final_price_cents` | preço confirmado **sem** cupom |
+| `estimated_final_price_with_coupon_cents` | cenário com cupom aplicado, **não confirmado** |
+
+Situação do cupom: `active` (vigente), `scheduled` (ainda não começou), `expired`
+(fora da janela) ou `unknown` (fonte não declarou janela). A simulação também rejeita
+mínimo de compra não atingido, cupom inválido e frete grátis quando o frete não é conhecido.
+
+`coupons check` grava a tentativa em `coupon_validation` com `method="local_rules"`.
+Isso é **auditoria do que calculamos**, não validação na loja. O Mercado Livre não
+oferece API pública de cupons; na Fase 2 cupons vêm apenas de feeds/fixture.
+
+Promoções podem ter janela declarada (estado `active`/`scheduled`/`expired`) ou vir
+sem janela (`unknown`). A **urgência** usada no ranking é apenas tempo restante
+(0–100); ela não afirma que o desconto é real nem que a loja é confiável.
+
+### Como o `deal_score` é composto
+
+| Dimensão | Peso | Observação |
+|---|---|---|
+| Preço | 25% | posição no coorte da busca |
+| Desconto corroborado | 20% | `suspicious` zera a dimensão |
+| Reputação | 20% | vendedor ou loja |
+| Histórico | 15% | posição na série própria |
+| Frete | 10% | frete grátis/desconhecido |
+| Avaliações | 5% | nota da fonte, encolhida com poucas amostras |
+| Urgência | 5% | só com janela aberta |
+
+As parcelas aparecem em `score_breakdown`. O número continua sendo **oportunidade**,
+não confiança.
+
+---
+
 ## Arquitetura
 
 Arquitetura hexagonal: `cli → application → domain ← adapters`.
@@ -301,9 +477,9 @@ Arquitetura hexagonal: `cli → application → domain ← adapters`.
 src/dealhunter/
 ├─ cli/            # Typer + Rich: comandos, render, ui, wiring
 ├─ domain/         # modelos, value objects, portas (clock), ids
-├─ application/    # casos de uso (search, alerts), DTOs, intent parser
+├─ application/    # casos de uso (search, alerts, coupons, promotions, reviews), DTOs, intent
 ├─ adapters/       # http (SSRF/robots), sources, storage, notify
-├─ services/       # text, normalizer, matching, pricing, ranking
+├─ services/       # text, normalizer, matching, pricing, coupons, promotions, ranking
 ├─ runtime/        # config, logging, container, paths
 └─ data/           # migrations SQL
 ```
@@ -317,6 +493,7 @@ Decisões registradas: [`docs/adr`](docs/adr).
 .venv\Scripts\python -m pytest        # suíte completa
 .venv\Scripts\python -m ruff check src tests
 .venv\Scripts\python -m ruff format --check src tests
+.venv\Scripts\python -m mypy src
 ```
 
 ## Princípios

@@ -1,6 +1,6 @@
 # Arquitetura — DealHunter
 
-Documento de referência. Versão 1.0 · Fase 0.
+Documento de referência. Versão 1.2 · Fase 2.
 
 ---
 
@@ -103,7 +103,8 @@ Toda decisão é registrada com evidência e pode ser desfeita (`product merge|s
 `preço final = produto + frete − desconto de promoção − cupom aplicável`
 
 Cupom não validado nunca reduz o preço "confirmado": exibimos
-`final_confirmado` e `final_com_cupom_estimado` separadamente.
+`final_confirmado` (`final_price_cents` no JSON) e `final_com_cupom_estimado`
+(`estimated_final_price_with_coupon_cents`) separadamente.
 
 Classes de desconto, comparando com **nosso** histórico:
 
@@ -139,6 +140,18 @@ Filtros rígidos → utilidade:
 U = 0.30·preço + 0.15·desconto real + 0.15·histórico + 0.15·confiança
   + 0.10·avaliações + 0.05·frete + 0.10·urgência − penalidade de risco
 ```
+
+Na Fase 2 o termo `confiança` ainda não existe (Fase 3); os pesos implementados são:
+
+```
+U = 0.25·preço + 0.20·desconto + 0.20·reputação + 0.15·histórico
+  + 0.10·frete + 0.05·avaliações + 0.05·urgência
+```
+
+O peso de reputação ocupa provisoriamente o espaço de confiança/risco. Quando o
+antifraude entrar, a fórmula-alvo acima volta a valer e a penalidade de risco é
+subtraída. `desconto` usa a classificação da seção 7: `suspicious` zera a
+dimensão, `insufficient_evidence` fica no neutro (50).
 
 `preço` é relativo ao coorte do produto canônico. Curadorias: melhor geral,
 menor preço final, mais confiável, relâmpago. O `score_breakdown` alimenta a
@@ -253,18 +266,44 @@ Desvios conscientes em relação ao desenho original:
 1. **Sem scraping de HTML.** Nenhuma loja específica é raspada na Fase 1; novas
    lojas entram por API oficial ou feed JSON documentado (decisão de
    conformidade, ver seção 16).
-2. **`deal_score` não é confiança.** Ver ADR 0006; `picks.safest`/`picks.flash`
-   ficam nulos até a Fase 3.
+2. **`deal_score` não é confiança.** Ver ADR 0006; `picks.safest` fica nulo até
+   a Fase 3.
 3. **Dedupe conservador.** Sem evidência forte, produtos não são fundidos
    (ADR 0005).
 4. **IA permanece desligada por padrão e sem uso na Fase 1.** O parser de intenção
    é 100% determinístico; o caminho de IA fica para a Fase 3 (resumo de
    avaliações/reclamações), com schema + guard numérico já previstos.
-5. **`monitor`, `coupons`, `interactive` adiados** para as Fases 2–4, conforme
-   roadmap.
+5. **`monitor` e `interactive` adiados** para as Fases 3–4, conforme roadmap.
+
+### Fase 2 — concluída
+
+| Área | Implementado |
+|---|---|
+| Cupons | `coupon` + `coupon_validation`; tipos percentual/valor fixo/frete grátis; mínimo, teto e janela; `coupons list`/`check` |
+| Promoções | `promotion` com janela e tipo (`flash`/`regular`/`clearance`); `promotions` com filtros de fonte e expiração |
+| Ranking | `deal_score` com preço, desconto corroborado, frete, reputação, histórico, avaliações e urgência; `score_breakdown`; `picks.flash` |
+| Avaliações | `review_summary` (agregado da fonte) e comando `reviews`; distribuição por estrelas |
+| CLI/JSON | `coupons`, `promotions`, `reviews`; envelope `schema_version` 1.1 (aditivo) |
+
+Desvios conscientes da Fase 2:
+
+1. **Cupom não é validado na loja.** `validation` é sempre `unverified` e
+   `last_verified_at` permanece nulo; `coupons check` executa regras locais e
+   registra `method="local_rules"` em `coupon_validation`. O Mercado Livre não
+   expõe API pública de cupons, então cupons vêm de feed/fixture.
+2. **`review` individual não é coletada.** A Fase 2 guarda apenas o agregado
+   publicado (`review_summary`). Texto de avaliação e reclamações exigem a
+   Fase 3 e as salvaguardas de IA (seção 12).
+3. **Identidade de estado atual.** `coupon` tem identidade `(loja, código)` e
+   `promotion` tem identidade `(oferta, tipo)`: uma nova coleta atualiza a janela
+   em vez de duplicar linhas. O histórico de preços continua em
+   `offer_snapshot`, que é append-only.
+4. **`picks.safest` continua nulo** até existir o score antifraude (Fase 3).
+5. **Fixture usa subdomínios `*.demo.local`.** `Store.id` deriva do domínio;
+   compartilhar `demo.local` faria todas as lojas demo colapsarem em uma só.
 
 ### Dados de demonstração
 
 A fonte `fixture` existe para testes e demonstração offline. Ela nunca é
-habilitada por padrão, usa o domínio `demo.local`, confiança ≤ 0,4 e injeta um
+habilitada por padrão, usa domínios `*.demo.local`, confiança ≤ 0,4 e injeta um
 aviso obrigatório em toda saída (inclusive no JSON).
