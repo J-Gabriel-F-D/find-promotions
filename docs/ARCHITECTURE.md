@@ -226,3 +226,45 @@ análise · `--debug` com timeline do pipeline.
 | Alucinação de IA | IA fora do caminho de dados críticos; schema + guard numérico |
 | Notificação duplicada | Outbox + `dedupe_key` UNIQUE + cooldown |
 | Dado desatualizado exibido como atual | `last_verified_at` obrigatório + rótulo explícito |
+
+## 17. Status de implementação
+
+### Fase 0 — concluída
+
+Configuração (TOML + env + flags), logging estruturado com redação de segredos,
+SQLite com migrações versionadas, container/DI, `status`, `db`, `config`,
+envelope `--json`, exit codes.
+
+### Fase 1 — concluída
+
+| Área | Implementado |
+|---|---|
+| Coleta | `MercadoLivreAdapter` (API oficial `/sites/MLB/search`), `FeedAdapter` (JSON genérico + robots.txt), `FixtureAdapter` (demo offline marcada) |
+| Rede | `HttpClient` com SSRF guard (IP privado/loopback/link-local, esquema, credenciais), retry com backoff e `Retry-After`, timeout |
+| Normalização | marca, categoria, capacidades, GTIN, identidade em cascata (GTIN → MPN → marca+família+capacidade → título isolado) |
+| Histórico | `offer_snapshot` append-only, `price_samples` por produto/oferta, percentis, `sufficient_history` (8 amostras/45 dias) |
+| Desconto | `likely_real` / `normal` / `suspicious` / `insufficient_evidence`, sempre com evidência textual |
+| Ranking | `deal_score` de oportunidade (preço/frete/histórico), picks `best`/`cheapest`; `safest`/`flash` = `null` |
+| Alertas | regras `max-price`/`discount`, canais console/SMTP, dedupe por faixa de R$ 50, pausar/retomar/remover |
+| CLI | `search`, `history`, `alerts`, `notify`, `sources`, além de `status`/`db`/`config` |
+
+Desvios conscientes em relação ao desenho original:
+
+1. **Sem scraping de HTML.** Nenhuma loja específica é raspada na Fase 1; novas
+   lojas entram por API oficial ou feed JSON documentado (decisão de
+   conformidade, ver seção 16).
+2. **`deal_score` não é confiança.** Ver ADR 0006; `picks.safest`/`picks.flash`
+   ficam nulos até a Fase 3.
+3. **Dedupe conservador.** Sem evidência forte, produtos não são fundidos
+   (ADR 0005).
+4. **IA permanece desligada por padrão e sem uso na Fase 1.** O parser de intenção
+   é 100% determinístico; o caminho de IA fica para a Fase 3 (resumo de
+   avaliações/reclamações), com schema + guard numérico já previstos.
+5. **`monitor`, `coupons`, `interactive` adiados** para as Fases 2–4, conforme
+   roadmap.
+
+### Dados de demonstração
+
+A fonte `fixture` existe para testes e demonstração offline. Ela nunca é
+habilitada por padrão, usa o domínio `demo.local`, confiança ≤ 0,4 e injeta um
+aviso obrigatório em toda saída (inclusive no JSON).
