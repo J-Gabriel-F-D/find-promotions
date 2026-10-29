@@ -77,12 +77,15 @@ Os marcadores são aplicados automaticamente pelo diretório em
   da deduplicação contra spam após a retenção.
 - Segredos cobrem precedência env/keyring, backend indisponível/falho, nomes
   inválidos, ausência de eco e comandos `status`/`set`/`delete`.
+- Confiança cobre separação entre `score` e `analysis_confidence`, prior de fonte,
+  desconto suspeito, avaliações com amostra pequena, domínio divergente, dados
+  antigos, ausência de `picks.safest` sem evidência e vocabulário sem acusação.
 
 ## Cobertura atual
 
-- 456 testes aprovados, 3 ignorados (permissões POSIX e cenários dependentes de
-  plataforma), em Windows/Python 3.14.5.
-- Cobertura combinada: **86,99%** (limite mínimo configurado: 85%).
+- 467 testes aprovados, 3 ignorados (permissões POSIX e cenários dependentes de
+  plataforma), 470 coletados, em Windows/Python 3.14.5.
+- Cobertura combinada: **87,34%** (limite mínimo configurado: 85%).
 - `ruff format --check`, `ruff check` e `mypy src` sem erros.
 - `bandit -r src`: sem achados (o jitter de retry é marcado como `nosec B311`,
   pois não é usado para criptografia).
@@ -95,7 +98,8 @@ Os marcadores são aplicados automaticamente pelo diretório em
 A suíte cobre apenas comportamento implementado. Ainda **não** existem, e por
 isso não são testados como se existissem:
 
-- score de confiança/antifraude e análise de reclamações individuais;
+- análise de reclamações individuais e sentimento de avaliações;
+- meio de pagamento e idade do domínio no score de confiança (dados não coletados);
 - comando `monitor` contínuo;
 - SMS e WhatsApp (o WhatsApp só pode usar API oficial);
 - linhas individuais de avaliações (hoje há apenas o agregado publicado).

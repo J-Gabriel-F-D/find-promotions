@@ -57,8 +57,11 @@ class TestSearch:
 
         assert payload["picks"]["best"] in offer_ids
         assert payload["picks"]["cheapest"] in offer_ids
-        # Fase 1 nao inventa curadorias que dependem de analise futura.
-        assert payload["picks"]["safest"] is None
+        assert payload["picks"]["safest"] in offer_ids
+        trust = payload["results"][0]["trust"]
+        assert 0 <= trust["score"] <= 100
+        assert 0 <= trust["analysis_confidence"] <= 1
+        assert trust["disclaimer"]
         # Fase 2: fixture declara uma promoção relâmpago com janela aberta.
         assert payload["picks"]["flash"] in offer_ids
 

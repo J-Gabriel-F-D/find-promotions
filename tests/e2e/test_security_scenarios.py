@@ -154,14 +154,30 @@ class TestRequiredScenarios:
 
 
 class TestTrustGuardrails:
-    def test_nao_inventa_pontuacao_de_confianca_ou_fraude(self, tmp_path: Path) -> None:
+    def test_confianca_e_probabilistica_e_separada_do_score(self, tmp_path: Path) -> None:
         result = _invoke(tmp_path, ["--json", "search", "redmi", "--source", "fixture"])
         payload = json.loads(result.output)
-        assert payload["picks"]["safest"] is None
+        offer_ids = {item["offer_id"] for item in payload["results"]}
+        assert payload["picks"]["safest"] in offer_ids
+
+        trust = payload["results"][0]["trust"]
+        assert set(trust) >= {
+            "score",
+            "analysis_confidence",
+            "risk_band",
+            "signals",
+            "limitations",
+            "disclaimer",
+        }
+        assert trust["score"] != trust["analysis_confidence"]
+        assert trust["signals"]
+        assert all(signal["source"] for signal in trust["signals"])
+
         dumped = json.dumps(payload, ensure_ascii=False).lower()
         assert "trust_score" not in dumped
         assert "fraudulento" not in dumped
         assert "100% seguro" not in dumped
+        assert "garantia de segurança" in dumped
 
     def test_avaliacoes_nao_viram_garantia(self, tmp_path: Path) -> None:
         search = _invoke(

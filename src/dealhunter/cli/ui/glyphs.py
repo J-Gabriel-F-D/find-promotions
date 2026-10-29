@@ -24,6 +24,7 @@ class Glyphs:
     clock: str
     arrow: str
     tag: str
+    shield: str
 
 
 UNICODE = Glyphs(
@@ -44,6 +45,7 @@ UNICODE = Glyphs(
     clock="🕒",
     arrow="→",
     tag="🏷",
+    shield="🛡",
 )
 
 ASCII = Glyphs(
@@ -64,6 +66,7 @@ ASCII = Glyphs(
     clock="em:",
     arrow="->",
     tag="[cupom]",
+    shield="[trust]",
 )
 
 

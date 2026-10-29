@@ -39,13 +39,15 @@ def test_score_expoe_breakdown_e_total(make_offer_record) -> None:
         "price",
         "discount",
         "shipping",
-        "reputation",
+        "trust",
         "history",
         "reviews",
         "urgency",
     ):
         assert dimension in breakdown
     assert breakdown["total"] == scored[0].deal_score
+    assert scored[0].trust is not None
+    assert scored[0].trust.disclaimer
 
 
 def test_desconto_suspeito_perde_para_desconto_normal(make_offer_record) -> None:
@@ -83,7 +85,9 @@ def test_promocao_aberta_recebe_bonus_de_urgencia(make_offer_record) -> None:
     assert by_url["https://loja.example/sem-promo"].score_breakdown["urgency"] == 0.0
 
 
-def test_select_picks_inclui_relampago_e_nao_inventa_safest(make_offer_record) -> None:
+def test_select_picks_inclui_relampago_e_nao_inventa_safest_sem_evidencia(
+    make_offer_record,
+) -> None:
     flash = make_view(
         make_offer_record,
         price_cents=120_000,

@@ -1,31 +1,31 @@
 """Ranking de ofertas.
 
-O score aqui e de **oportunidade** (preço/desconto/frete/reputacao/histórico/
-avaliações/urgência), não de confiabilidade -- o score antifraude entra na
-Fase 3. Chamar de "confiabilidade" antes de existir a análise de risco seria
-enganoso.
+O ``deal_score`` continua sendo de **oportunidade**, mas agora inclui também o
+componente de confiança calculado separadamente. Confiança e oportunidade não
+são a mesma coisa: ``view.trust.score`` e ``view.trust.analysis_confidence``
+ficam em um objeto próprio e nunca são escondidos dentro de um único número.
 
-Cada dimensão é exposta em ``score_breakdown`` para que a recomendação possa ser
-explicada, e não apenas exibida como um número mágico.
+Cada dimensão é exposta em ``score_breakdown`` e em ``trust.signals`` para que
+a recomendação possa ser explicada.
 """
 
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import datetime
+from datetime import UTC, datetime
 
 from dealhunter.application.dto import QuerySpec
-from dealhunter.domain.models import OfferView
-from dealhunter.services import promotions
+from dealhunter.domain.models import OfferView, TrustAssessment
+from dealhunter.services import promotions, trust
 
 WEIGHTS = {
-    "price": 0.25,
-    "discount": 0.20,
-    "shipping": 0.10,
-    "reputation": 0.20,
+    "price": 0.30,
+    "discount": 0.15,
     "history": 0.15,
-    "reviews": 0.05,
-    "urgency": 0.05,
+    "trust": 0.15,
+    "reviews": 0.10,
+    "shipping": 0.05,
+    "urgency": 0.10,
 }
 
 _DISCOUNT_SCORES = {
@@ -47,14 +47,6 @@ def _shipping_component(view: OfferView) -> float:
     if not view.offer.shipping_known:
         return 40.0
     return 100.0 if view.offer.final_price == view.offer.price else 50.0
-
-
-def _reputation_component(view: OfferView) -> float:
-    if view.seller is not None and view.seller.rating is not None:
-        return max(0.0, min(view.seller.rating / 5 * 100, 100.0))
-    if view.store.reputation is not None:
-        return max(0.0, min(view.store.reputation, 100.0))
-    return 50.0
 
 
 def _history_component(view: OfferView) -> float:
@@ -89,21 +81,38 @@ def score_views(views: list[OfferView], *, now: datetime | None = None) -> list[
     if not views:
         return []
 
+    effective_now = now or datetime.now(UTC)
+    views = trust.enrich(views, now=effective_now)
     prices = [view.offer.final_price.cents for view in views]
     cheapest, priciest = min(prices), max(prices)
 
     scored: list[OfferView] = []
     for view in views:
+        assessment = view.trust or trust.assess(view, now=effective_now)
         components = {
             "price": round(_price_component(view, cheapest, priciest), 1),
             "discount": round(_discount_component(view), 1),
             "shipping": round(_shipping_component(view), 1),
-            "reputation": round(_reputation_component(view), 1),
+            "trust": round(assessment.score, 1),
             "history": round(_history_component(view), 1),
             "reviews": round(_reviews_component(view), 1),
-            "urgency": round(_urgency_component(view, now) if now else 0.0, 1),
+            "urgency": round(
+                _urgency_component(view, effective_now) if now is not None else 0.0, 1
+            ),
         }
         score = sum(WEIGHTS[name] * value for name, value in components.items())
+        # Penalidade apenas por sinais observáveis (desconto não corroborado e
+        # faixa de risco elevada). Não é uma acusação de fraude.
+        risk_penalty = 0.0
+        if view.discount.classification == "suspicious":
+            risk_penalty += 5.0
+        if assessment.analysis_confidence < trust.SAFEST_MIN_CONFIDENCE:
+            risk_penalty += 2.0
+        if assessment.risk_band == "elevated":
+            risk_penalty += min(10.0, max(0.0, 50.0 - assessment.score) * 0.4)
+        score = max(0.0, score - risk_penalty)
+        if risk_penalty:
+            components["risk_penalty"] = round(risk_penalty, 1)
         components["total"] = round(score, 1)
 
         flags = list(view.flags)
@@ -117,12 +126,17 @@ def score_views(views: list[OfferView], *, now: datetime | None = None) -> list[
             flags.append("cupom_nao_validado")
         if view.promotion is not None and now and view.promotion.state_at(now) == "unknown":
             flags.append("promocao_sem_janela")
+        if assessment.analysis_confidence < trust.SAFEST_MIN_CONFIDENCE:
+            flags.append("analise_confianca_limitada")
+        if assessment.risk_band == "elevated":
+            flags.append("sinais_de_atencao")
         scored.append(
             replace(
                 view,
                 deal_score=round(score, 1),
                 flags=tuple(dict.fromkeys(flags)),
                 score_breakdown=components,
+                trust=assessment,
             )
         )
     return scored
@@ -143,11 +157,11 @@ def sort_views(views: list[OfferView], mode: str) -> list[OfferView]:
 
 
 def select_picks(views: list[OfferView], *, now: datetime) -> dict[str, str | None]:
-    """Curadorias da Fase 2.
+    """Curadorias: melhor geral, menor preço, mais confiável e relâmpago.
 
-    ``safest`` continua nulo de propósito: exige análise antifraude (Fase 3).
-    ``flash`` só aponta para promoção declarada como ``flash`` e com janela
-    aberta pela fonte.
+    ``safest`` só é preenchido quando a análise de confiança tem evidência
+    mínima (``analysis_confidence``) e score suficiente. Caso contrário fica
+    nulo: não inventamos uma recomendação de confiança.
     """
     if not views:
         return {"best": None, "cheapest": None, "safest": None, "flash": None}
@@ -155,10 +169,30 @@ def select_picks(views: list[OfferView], *, now: datetime) -> dict[str, str | No
     best = max(views, key=lambda view: (view.deal_score, -view.offer.final_price.cents))
     cheapest = min(views, key=lambda view: view.offer.final_price.cents)
     flash = promotions.select_flash(views, now)
+    safest_candidates: list[tuple[OfferView, TrustAssessment]] = []
+    for view in views:
+        assessment = view.trust or trust.assess(view, now=now)
+        if (
+            assessment.score >= trust.SAFEST_MIN_SCORE
+            and assessment.analysis_confidence >= trust.SAFEST_MIN_CONFIDENCE
+        ):
+            safest_candidates.append((view, assessment))
+    safest = (
+        max(
+            safest_candidates,
+            key=lambda item: (
+                item[1].score,
+                item[1].analysis_confidence,
+                -item[0].offer.final_price.cents,
+            ),
+        )[0]
+        if safest_candidates
+        else None
+    )
     return {
         "best": best.offer.id,
         "cheapest": cheapest.offer.id,
-        "safest": None,
+        "safest": safest.offer.id if safest else None,
         "flash": flash.offer.id if flash else None,
     }
 
@@ -166,5 +200,5 @@ def select_picks(views: list[OfferView], *, now: datetime) -> dict[str, str | No
 def apply_filters(
     views: list[OfferView], spec: QuerySpec
 ) -> tuple[list[OfferView], dict[str, int]]:
-    """Reservado para filtros pos-análise (ex.: score mínimo na Fase 3)."""
+    """Reservado para filtros pós-análise (ex.: score mínimo de confiança)."""
     return views, {}

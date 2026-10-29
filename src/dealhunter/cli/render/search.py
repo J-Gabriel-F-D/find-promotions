@@ -12,7 +12,12 @@ from rich.table import Table
 
 from dealhunter.application.dto import SearchReport
 from dealhunter.cli.render import envelope
-from dealhunter.domain.models import CouponEvaluation, OfferView
+from dealhunter.domain.models import (
+    TRUST_DISCLAIMER,
+    CouponEvaluation,
+    OfferView,
+    TrustAssessment,
+)
 from dealhunter.runtime.container import RuntimeContext
 from dealhunter.services import coupons as coupon_rules
 from dealhunter.services import promotions as promotion_rules
@@ -30,6 +35,15 @@ FLAG_LABELS = {
     "reputacao_desconhecida": "reputação desconhecida",
     "cupom_nao_validado": "cupom não validado na loja",
     "promocao_sem_janela": "promoção sem janela declarada",
+    "analise_confianca_limitada": "análise de confiança com dados limitados",
+    "sinais_de_atencao": "sinais que pedem atenção",
+}
+
+TRUST_BAND_LABELS = {
+    "low": ("baixo risco identificado", "green"),
+    "moderate": ("risco moderado", "yellow"),
+    "elevated": ("sinais de risco elevado", "red"),
+    "insufficient_data": ("dados insuficientes", "dim"),
 }
 
 
@@ -99,6 +113,30 @@ def coupon_payload(evaluation: CouponEvaluation, *, now: datetime) -> dict[str, 
     }
 
 
+def trust_payload(assessment: TrustAssessment) -> dict[str, Any]:
+    return {
+        "score": assessment.score,
+        "analysis_confidence": assessment.analysis_confidence,
+        "risk_band": assessment.risk_band,
+        "dimensions": assessment.dimensions,
+        "signals": [
+            {
+                "code": signal.code,
+                "dimension": signal.dimension,
+                "direction": signal.direction,
+                "weight": signal.weight,
+                "confidence": signal.confidence,
+                "source": signal.source,
+                "evidence": signal.evidence,
+            }
+            for signal in assessment.signals
+        ],
+        "limitations": list(assessment.limitations),
+        "rules_version": assessment.rules_version,
+        "disclaimer": assessment.disclaimer,
+    }
+
+
 def offer_payload(view: OfferView, *, now: datetime | None = None) -> dict[str, Any]:
     now = now or datetime.now(UTC)
     offer, product, stats = view.offer, view.product, view.stats
@@ -165,6 +203,7 @@ def offer_payload(view: OfferView, *, now: datetime | None = None) -> dict[str, 
         ),
         "deal_score": view.deal_score,
         "score_breakdown": view.score_breakdown,
+        "trust": trust_payload(view.trust) if view.trust else None,
         "discount": {
             "classification": view.discount.classification,
             "evidence": view.discount.evidence,
@@ -302,6 +341,15 @@ def _offer_card(view: OfferView, rt: RuntimeContext, badges: list[str], now: dat
         "não é score de confiança)[/dim]"
     )
 
+    if view.trust is not None:
+        trust_label, trust_color = TRUST_BAND_LABELS[view.trust.risk_band]
+        lines.append(
+            f"{glyphs.shield} confiança [bold]{int(view.trust.score)}/100[/bold] "
+            f"[{trust_color}]({trust_label})[/{trust_color}] "
+            f"[dim](análise cobriu {view.trust.analysis_confidence * 100:.0f}% "
+            "dos dados; probabilística)[/dim]"
+        )
+
     flags = [FLAG_LABELS.get(flag, flag) for flag in view.flags]
     if flags:
         lines.append(f"[yellow]{glyphs.warn} {'; '.join(flags)}[/yellow]")
@@ -339,6 +387,7 @@ def render_search(report: SearchReport, rt: RuntimeContext) -> None:
         f"Busca livre: {escape(report.spec.raw)}"
     )
     console.print(summary, style="bold")
+    console.print(f"[dim]{escape(TRUST_DISCLAIMER)}[/dim]")
     console.print(_source_lines(report, rt))
     console.print(
         f"[dim]{report.collected} coletadas | {len(report.views)} válidas | "
@@ -363,6 +412,8 @@ def render_search(report: SearchReport, rt: RuntimeContext) -> None:
             badges.append(f"{glyphs.trophy} MELHOR OFERTA")
         if report.picks.get("cheapest") == view.offer.id:
             badges.append(f"{glyphs.money} MENOR PREÇO")
+        if report.picks.get("safest") == view.offer.id:
+            badges.append(f"{glyphs.shield} MAIS CONFIÁVEL")
         if report.picks.get("flash") == view.offer.id:
             badges.append(f"{glyphs.fire} RELÂMPAGO")
         if not badges:

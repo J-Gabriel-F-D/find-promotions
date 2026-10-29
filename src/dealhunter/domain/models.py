@@ -18,6 +18,12 @@ CouponKind = Literal["percent", "fixed", "free_shipping"]
 CouponState = Literal["active", "scheduled", "expired", "unknown"]
 PromotionKind = Literal["flash", "regular", "clearance"]
 PromotionState = Literal["active", "scheduled", "expired", "unknown"]
+TrustDirection = Literal["positive", "negative", "neutral"]
+TrustBand = Literal["low", "moderate", "elevated", "insufficient_data"]
+TRUST_DISCLAIMER = (
+    "Análise probabilística baseada nos dados disponíveis; não é acusação de "
+    "fraude nem garantia de segurança."
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -354,6 +360,55 @@ class SourceStatus:
 
 
 @dataclass(frozen=True, slots=True)
+class TrustSignal:
+    """Uma evidência usada na análise probabilística de confiança.
+
+    ``weight`` é o peso efetivo (peso da dimensão × cobertura de evidência).
+    Nunca representa uma acusação: descreve apenas um sinal observável.
+    """
+
+    code: str
+    dimension: str
+    direction: TrustDirection
+    weight: float
+    confidence: float
+    evidence: str
+    source: str
+
+    def __post_init__(self) -> None:
+        if not 0.0 <= self.weight <= 1.0:
+            raise ValueError("peso de sinal inválido")
+        if not 0.0 <= self.confidence <= 1.0:
+            raise ValueError("confiança de sinal inválida")
+
+
+@dataclass(frozen=True, slots=True)
+class TrustAssessment:
+    """Análise de confiança separada do score de oportunidade.
+
+    ``score`` vai de 0 a 100 (quanto maior, mais sinais favoráveis disponíveis).
+    ``analysis_confidence`` vai de 0 a 1 e mede *quanto* dado foi possível
+    observar, não a probabilidade de fraude. A ausência de dados nunca deve ser
+    lida como acusação.
+    """
+
+    score: float
+    analysis_confidence: float
+    risk_band: TrustBand
+    dimensions: dict[str, float] = field(default_factory=dict)
+    signals: tuple[TrustSignal, ...] = ()
+    limitations: tuple[str, ...] = ()
+    rules_version: str = "trust-v1"
+    disclaimer: str = TRUST_DISCLAIMER
+
+    def __post_init__(self) -> None:
+        if not 0.0 <= self.score <= 100.0:
+            raise ValueError("score de confiança deve ficar entre 0 e 100")
+        if not 0.0 <= self.analysis_confidence <= 1.0:
+            raise ValueError("analysis_confidence deve ficar entre 0 e 1")
+
+
+@dataclass(frozen=True, slots=True)
 class OfferView:
     """Oferta enriquecida para apresentacao (não persistida)."""
 
@@ -370,3 +425,4 @@ class OfferView:
     promotion: Promotion | None = None
     reviews: ReviewSummary | None = None
     score_breakdown: dict[str, float] = field(default_factory=dict)
+    trust: TrustAssessment | None = None

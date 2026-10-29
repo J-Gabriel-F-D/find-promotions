@@ -120,17 +120,23 @@ não confiável.
 
 ## 8. Antifraude
 
-Determinístico e explicável. Dimensões: preço (25), histórico (20), loja (20),
-vendedor (15), pagamento (10), reputação (10) — pesos renormalizados apenas
-sobre dimensões com dados.
+Determinístico e explicável, implementado em `services/trust.py`. Dimensões e
+pesos máximos: preço (25), histórico (15), loja/procedência (15), vendedor (15),
+reputação/avaliações (10), frescor (10) e pagamento (10). Dimensões sem dado
+não entram no numerador; o denominador continua completo, então ausência de
+dado reduz `analysis_confidence` em vez de inflar o score.
 
-Teto rígido em combinações graves (ex.: PIX-only + domínio < 90 dias + preço
-anômalo → score máximo 45). Saída: `score`, `risk_band`, `dimensions`,
-`signals[]` (código, peso, direção, fonte, confiança), `analysis_confidence`,
-`rules_version`.
+`score` vai de 0 a 100 (maior = mais sinais favoráveis disponíveis) e
+`analysis_confidence` vai de 0 a 1 (cobertura de evidência). São campos
+separados de propósito: score alto com cobertura baixa não vira recomendação.
+Saída: `score`, `risk_band`, `dimensions`, `signals[]` (código, direção, peso,
+fonte, confiança e evidência), `analysis_confidence`, `limitations`,
+`rules_version` e `disclaimer`.
 
-Vocabulário obrigatório: *"baixo risco identificado com base nos dados
-disponíveis"*. Proibido: "loja segura", "loja fraudulenta".
+Meio de pagamento e idade do domínio **não são coletados** nesta fase, portanto
+não há teto rígido baseado neles. A limitação aparece em `limitations`. O
+vocabulário obrigatório é probabilístico: *"baixo risco identificado com base
+nos dados disponíveis"*. Proibido: "loja segura", "loja fraudulenta".
 
 ## 9. Ranking
 
@@ -141,17 +147,11 @@ U = 0.30·preço + 0.15·desconto real + 0.15·histórico + 0.15·confiança
   + 0.10·avaliações + 0.05·frete + 0.10·urgência − penalidade de risco
 ```
 
-Na Fase 2 o termo `confiança` ainda não existe (Fase 3); os pesos implementados são:
-
-```
-U = 0.25·preço + 0.20·desconto + 0.20·reputação + 0.15·histórico
-  + 0.10·frete + 0.05·avaliações + 0.05·urgência
-```
-
-O peso de reputação ocupa provisoriamente o espaço de confiança/risco. Quando o
-antifraude entrar, a fórmula-alvo acima volta a valer e a penalidade de risco é
-subtraída. `desconto` usa a classificação da seção 7: `suspicious` zera a
-dimensão, `insufficient_evidence` fica no neutro (50).
+A fórmula acima é a implementada. A penalidade é explícita e aparece em
+`score_breakdown.risk_penalty`: desconto `suspicious` (+5), cobertura de
+confiança abaixo do mínimo (+2) e faixa `elevated` (até +10). `desconto` usa a
+classificação da seção 7: `suspicious` zera a dimensão, `insufficient_evidence`
+fica no neutro (50).
 
 `preço` é relativo ao coorte do produto canônico. Curadorias: melhor geral,
 menor preço final, mais confiável, relâmpago. O `score_breakdown` alimenta a
@@ -258,7 +258,7 @@ envelope `--json`, exit codes.
 | Normalização | marca, categoria, capacidades, GTIN, identidade em cascata (GTIN → MPN → marca+família+capacidade → título isolado) |
 | Histórico | `offer_snapshot` append-only, `price_samples` por produto/oferta, percentis, `sufficient_history` (8 amostras/45 dias) |
 | Desconto | `likely_real` / `normal` / `suspicious` / `insufficient_evidence`, sempre com evidência textual |
-| Ranking | `deal_score` de oportunidade (preço/frete/histórico), picks `best`/`cheapest`; `safest`/`flash` = `null` |
+| Ranking | `deal_score` de oportunidade (preço/desconto/histórico/confiança), picks `best`/`cheapest`/`safest`/`flash`; `trust` separado |
 | Alertas | regras `max-price`/`discount`, canais console/SMTP, dedupe por faixa de R$ 50, pausar/retomar/remover |
 | CLI | `search`, `history`, `alerts`, `notify`, `privacy`, `secrets`, `sources`, além de `status`/`db`/`config` |
 
@@ -267,8 +267,8 @@ Desvios conscientes em relação ao desenho original:
 1. **Sem scraping de HTML.** Nenhuma loja específica é raspada na Fase 1; novas
    lojas entram por API oficial ou feed JSON documentado (decisão de
    conformidade, ver seção 16).
-2. **`deal_score` não é confiança.** Ver ADR 0006; `picks.safest` fica nulo até
-   a Fase 3.
+2. **`deal_score` não é confiança.** Ver ADR 0006; a confiança fica em `trust`,
+   com score e `analysis_confidence` próprios.
 3. **Dedupe conservador.** Sem evidência forte, produtos não são fundidos
    (ADR 0005).
 4. **IA permanece desligada por padrão e sem uso na Fase 1.** O parser de intenção
@@ -282,7 +282,7 @@ Desvios conscientes em relação ao desenho original:
 |---|---|
 | Cupons | `coupon` + `coupon_validation`; tipos percentual/valor fixo/frete grátis; mínimo, teto e janela; `coupons list`/`check` |
 | Promoções | `promotion` com janela e tipo (`flash`/`regular`/`clearance`); `promotions` com filtros de fonte e expiração |
-| Ranking | `deal_score` com preço, desconto corroborado, frete, reputação, histórico, avaliações e urgência; `score_breakdown`; `picks.flash` |
+| Ranking | `deal_score` com preço, desconto corroborado, frete, confiança, histórico, avaliações e urgência; `score_breakdown`; `picks.flash` |
 | Avaliações | `review_summary` (agregado da fonte) e comando `reviews`; distribuição por estrelas |
 | CLI/JSON | `coupons`, `promotions`, `reviews`; envelope `schema_version` 1.1 (aditivo) |
 
@@ -299,9 +299,22 @@ Desvios conscientes da Fase 2:
    `promotion` tem identidade `(oferta, tipo)`: uma nova coleta atualiza a janela
    em vez de duplicar linhas. O histórico de preços continua em
    `offer_snapshot`, que é append-only.
-4. **`picks.safest` continua nulo** até existir o score antifraude (Fase 3).
-5. **Fixture usa subdomínios `*.demo.local`.** `Store.id` deriva do domínio;
+4. **Fixture usa subdomínios `*.demo.local`.** `Store.id` deriva do domínio;
    compartilhar `demo.local` faria todas as lojas demo colapsarem em uma só.
+
+### Fase 3 — parcial (confiança)
+
+| Área | Implementado |
+|---|---|
+| Confiança | `TrustAssessment` com `score` 0–100, `analysis_confidence` 0–1, `risk_band`, dimensões, sinais, limitações e `rules_version` |
+| Sinais | procedência da fonte/loja, domínio/HTTPS, vendedor, avaliações agregadas, desconto, histórico e frescor |
+| Ranking | `picks.safest` quando há score ≥ 50 e cobertura ≥ 0,30; caso contrário `null` |
+| Explicabilidade | evidência textual por sinal, `disclaimer` obrigatório e JSON aditivo dentro de cada oferta |
+| Testes | `tests/unit/test_trust.py`, e2e de guardrails e cenários de separação score/confiança |
+
+Pendente na Fase 3: análise de sentimento/reclamações, linhas individuais de
+avaliação e `interactive`. Meio de pagamento e idade do domínio não são
+coletados; não há teto rígido baseado neles.
 
 ### Dados de demonstração
 

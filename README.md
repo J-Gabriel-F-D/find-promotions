@@ -14,7 +14,7 @@ Roda no terminal, sem servidor, sem Docker, sem dashboard web.
 | **0 — Fundação** | Estrutura, configuração, logging, banco + migrações, container, CLI base, `--json`, exit codes | ✅ concluída |
 | **1 — MVP** | `search`, fontes (Mercado Livre + feed + fixture), normalização/dedupe, histórico, `alerts`, e-mail | ✅ concluída |
 | **2 — Ofertas** | cupons, promoções, ranking por promoção, avaliações | ✅ concluída |
-| 3 — Confiança | antifraude, score de confiança, falso desconto, reclamações, `interactive` | ⏳ |
+| 3 — Confiança | análise probabilística de confiança/antifraude, falso desconto, `picks.safest`; reclamações e `interactive` pendentes | 🟡 parcial |
 | 4 — Automação | `monitor` contínuo, WhatsApp/SMS, alertas inteligentes | ⏳ |
 
 Decisões aprovadas: **Python 3.12+** · **Mercado Livre (API oficial) + fixture + adapter genérico** · **IA opcional com fallback determinístico**.
@@ -35,23 +35,34 @@ Decisões aprovadas: **Python 3.12+** · **Mercado Livre (API oficial) + fixture
   `coupons list` mostra os cupons conhecidos; `coupons check` simula a aplicação sobre um preço.
 - **Promoções** com janela temporal (`flash`, `regular`, `clearance`). O pick `flash` só é preenchido
   quando a fonte declarou uma promoção `flash` com janela **aberta**.
-- **Ranking por promoção**: o `deal_score` agora pondera preço, desconto corroborado, frete, reputação,
-  histórico, avaliações e urgência — e expõe cada parcela em `score_breakdown`.
+- **Ranking por promoção**: o `deal_score` agora pondera preço, desconto corroborado, frete,
+  confiança, histórico, avaliações e urgência — e expõe cada parcela em `score_breakdown`.
 - **Avaliações**: agregado publicado pela fonte (nota, quantidade e distribuição) em `reviews` e nos cards.
 
 Limite explícito: cupom continua sendo **declaração da fonte**, não validação. Veja
 [Cupons e promoções](#cupons-e-promoções-o-que-é-e-não-é-validado).
 
-### Limites atuais (Fases 1–2)
+### O que a Fase 3 adiciona
 
-- Não calcula **score de confiança/antifraude** — isso é a Fase 3. O `deal_score` exibido é de
-  **oportunidade** (preço/desconto/frete/histórico/avaliações/urgência), e a interface diz isso.
-- `picks.safest` continua `null`: depende da análise de risco da Fase 3.
+- **Análise probabilística de confiança** por oferta, em `trust`, com `score` (0–100) separado de
+  `analysis_confidence` (0–1), `risk_band` e sinais rastreáveis (`signals[]`).
+- Dimensões observáveis: procedência da fonte/loja, reputação do vendedor, avaliações agregadas,
+  desconto corroborado pelo histórico, histórico de preços e frescor da coleta.
+- **`picks.safest`** passa a existir quando há evidência mínima; sem cobertura suficiente, continua `null`.
+- Limitações explícitas: meio de pagamento e idade do domínio **não** são coletados nesta fase.
+  A análise nunca afirma fraude nem segurança absoluta.
+
+### Limites atuais (Fases 1–3)
+
+- A confiança é **probabilística e limitada aos dados coletados**. Ela não substitui verificação
+  manual, não consulta meio de pagamento e não prova idoneidade da loja.
+- `picks.safest` pode ser `null`: nesse caso não há evidência mínima para recomendar confiança.
+- O `deal_score` continua sendo de **oportunidade**; confiança fica em `trust`, com campos próprios.
 - `picks.flash` só existe quando a fonte declara promoção do tipo `flash` com janela aberta;
   promoção `regular` não recebe o selo "relâmpago".
 - **Nenhum cupom é validado na loja** nesta fase. `validation` é sempre `unverified` e
   `last_verified_at` fica `null`; o Mercado Livre não expõe API pública de cupons.
-- Avaliações são apenas o **agregado da fonte**. Análise de sentimento/reclamações é Fase 3.
+- Avaliações são apenas o **agregado da fonte**. Análise de sentimento/reclamações ainda não existe.
 - Não faz scraping de HTML de lojas. Novas lojas entram por **feed JSON documentado** ou API oficial.
 - A fonte `fixture` é **demonstração offline**: preços, cupons e promoções fictícios, marcados em toda saída.
 
@@ -240,7 +251,7 @@ dealhunter --json search "redmi note 14 256gb" --source fixture
     "spec": { "product": "redmi note 14", "brand": "xiaomi", "storage_gb": 256, "max_price_cents": 180000 }
   },
   "sources": [{ "id": "fixture", "status": "ok", "items": 3, "discarded": 0, "duration_ms": 0 }],
-  "picks": { "best": "off_...", "cheapest": "off_...", "safest": null, "flash": "off_..." },
+  "picks": { "best": "off_...", "cheapest": "off_...", "safest": "off_...", "flash": "off_..." },
   "stats": { "collected": 3, "eligible": 3, "discarded": 0, "discard_reasons": {}, "duration_ms": 33 },
   "results": [
     {
@@ -295,10 +306,34 @@ dealhunter --json search "redmi note 14 256gb" --source fixture
         "distribution": { "1": 2, "2": 4, "3": 9, "4": 38, "5": 160 },
         "negative_share": 0.028, "source": "fixture", "confidence": 0.4
       },
-      "deal_score": 69.2,
+      "deal_score": 63.4,
       "score_breakdown": {
-        "price": 41.2, "discount": 60.0, "shipping": 100.0, "reputation": 96.0,
-        "history": 58.3, "reviews": 94.0, "urgency": 85.0, "total": 69.2
+        "price": 41.2, "discount": 60.0, "shipping": 100.0, "trust": 69.6,
+        "history": 58.3, "reviews": 94.0, "urgency": 85.0, "total": 63.4
+      },
+      "trust": {
+        "score": 69.6,
+        "analysis_confidence": 0.51,
+        "risk_band": "moderate",
+        "dimensions": {
+          "store": 25.4, "seller": 80.7, "reputation": 89.4,
+          "price": 58.0, "history": 80.0, "freshness": 85.0
+        },
+        "signals": [
+          {
+            "code": "procedencia_loja", "dimension": "store", "direction": "negative",
+            "weight": 0.068, "confidence": 0.45, "source": "fixture",
+            "evidence": "fonte: dados fictícios de demonstração; ..."
+          },
+          {
+            "code": "reputacao_vendedor", "dimension": "seller", "direction": "positive",
+            "weight": 0.061, "confidence": 0.404, "source": "fixture",
+            "evidence": "vendedor 4.8/5; volume de vendas não informado"
+          }
+        ],
+        "limitations": ["meio de pagamento não analisado (dado não coletado)"],
+        "rules_version": "trust-v1",
+        "disclaimer": "Análise probabilística baseada nos dados disponíveis; não é acusação de fraude nem garantia de segurança."
       },
       "discount": { "classification": "normal", "evidence": "preço dentro da faixa habitual (...)" },
       "flags": ["cupom_nao_validado"],
@@ -318,7 +353,8 @@ substituem `final_price_cents`, que é o preço confirmado sem cupom.
 
 `schema_version` passou de `1.0` para `1.1` na Fase 2 de forma **aditiva**: campos novos
 (`coupons`, `best_coupon`, `promotion`, `reviews`, `score_breakdown`) e `picks.flash`
-preenchido quando existe promoção `flash` com janela aberta. Consumidores que ignoram campos
+preenchido quando existe promoção `flash` com janela aberta. A Fase 3 adicionou `trust` por
+oferta e passou a preencher `picks.safest`; ambos são aditivos. Consumidores que ignoram campos
 desconhecidos continuam funcionando.
 
 O histograma de preços **não** é inflado por rechecagens: a mesma oferta com o mesmo preço
@@ -496,16 +532,39 @@ sem janela (`unknown`). A **urgência** usada no ranking é apenas tempo restant
 
 | Dimensão | Peso | Observação |
 |---|---|---|
-| Preço | 25% | posição no coorte da busca |
-| Desconto corroborado | 20% | `suspicious` zera a dimensão |
-| Reputação | 20% | vendedor ou loja |
+| Preço | 30% | posição no coorte da busca |
+| Desconto corroborado | 15% | `suspicious` zera a dimensão e aplica penalidade |
 | Histórico | 15% | posição na série própria |
-| Frete | 10% | frete grátis/desconhecido |
-| Avaliações | 5% | nota da fonte, encolhida com poucas amostras |
-| Urgência | 5% | só com janela aberta |
+| Confiança | 15% | `trust.score`, calculado à parte |
+| Avaliações | 10% | nota da fonte, encolhida com poucas amostras |
+| Frete | 5% | frete grátis/desconhecido |
+| Urgência | 10% | só com janela aberta |
 
-As parcelas aparecem em `score_breakdown`. O número continua sendo **oportunidade**,
-não confiança.
+Além da soma ponderada, o `deal_score` sofre uma **penalidade de risco** explícita quando o
+desconto é `suspicious`, quando a análise de confiança tem cobertura baixa ou quando a faixa é
+`elevated`. A penalidade aparece em `score_breakdown.risk_penalty`. As parcelas aparecem em
+`score_breakdown`; o número continua sendo **oportunidade**, não confiança.
+
+### Como a confiança é calculada
+
+`trust.score` (0–100) resume sinais favoráveis e desfavoráveis; `trust.analysis_confidence`
+(0–1) mede **quanto** dos dados disponíveis foi possível observar. São números diferentes e
+não devem ser somados nem lidos como probabilidade de fraude.
+
+| Dimensão | Peso máximo | Dados usados |
+|---|---|---|
+| Preço | 25% | classificação do desconto pelo histórico próprio |
+| Histórico | 15% | amostras e dias cobertos |
+| Loja/procedência | 15% | fonte declarada, reputação da loja, domínio e HTTPS |
+| Vendedor | 15% | nota e volume de vendas, com encolhimento bayesiano |
+| Reputação/avaliações | 10% | agregado publicado e proporção de 1–2 estrelas |
+| Frescor | 10% | idade de `collected_at` |
+| Pagamento | 10% | **não coletado**; permanece como limitação explícita |
+
+A saída inclui `signals[]` com `code`, direção, peso efetivo, confiança, fonte e evidência.
+`risk_band` usa `low`, `moderate`, `elevated` ou `insufficient_data`. O texto obrigatório é
+probabilístico: *"baixo risco identificado com base nos dados disponíveis"*, nunca "loja segura"
+ou "loja fraudulenta".
 
 ---
 
