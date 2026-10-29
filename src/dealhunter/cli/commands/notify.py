@@ -59,7 +59,7 @@ def status(ctx: typer.Context) -> None:
     if not notifier.supports("email"):
         rt.console.print(
             "[dim]Para e-mail: configure [notifications] smtp_host, email_from e email_to, "
-            "e exporte DEALHUNTER_SMTP_PASSWORD.[/dim]"
+            "e defina DEALHUNTER_SMTP_PASSWORD ou use 'dealhunter secrets set'.[/dim]"
         )
 
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, replace
@@ -26,6 +27,7 @@ from dealhunter.application.use_cases.reviews import ReviewReport, ReviewService
 from dealhunter.application.use_cases.search import HistoryService, SearchService
 from dealhunter.domain.value_objects.money import Money
 from dealhunter.runtime.container import RuntimeContext
+from dealhunter.runtime.secrets import SecretStore
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,8 +59,11 @@ async def open_stack(
         timeout=rt.config.search.timeout_seconds,
         requests_per_minute=settings.requests_per_minute,
     )
+    secrets = SecretStore(environ=os.environ)
     try:
-        adapters, warnings = build_adapters(http, settings, clock=rt.clock)
+        adapters, warnings = build_adapters(
+            http, settings, clock=rt.clock, environ=os.environ, secrets=secrets
+        )
         if not adapters:
             warnings.append("nenhuma fonte habilitada: a busca não tem de onde coletar")
 
@@ -73,6 +78,8 @@ async def open_stack(
             # Em modo `--json` o stdout precisa ficar limpo: o canal de console
             # e redundante, pois o resultado ja vai no envelope.
             printer=(lambda _text: None) if rt.json_output else rt.error_console.print,
+            environ=os.environ,
+            secrets=secrets,
         )
         yield Stack(
             search=SearchService(repository=repository, runner=runner, clock=rt.clock),

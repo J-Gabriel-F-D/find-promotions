@@ -65,6 +65,8 @@ py -3 -m venv .venv
 # source .venv/bin/activate && pip install -e ".[dev]"   # Linux/macOS
 ```
 
+Para habilitar o cofre do sistema (opcional), instale também `".[secrets]"`.
+
 Ou, em qualquer sistema, como ferramenta isolada:
 
 ```bash
@@ -142,7 +144,22 @@ dealhunter notify test
 dealhunter notify test --channel console
 ```
 
-E-mail usa SMTP (`smtplib`). A senha vem de `DEALHUNTER_SMTP_PASSWORD` — nunca do TOML.
+E-mail usa SMTP (`smtplib`). A senha vem de `DEALHUNTER_SMTP_PASSWORD` ou do
+keyring do sistema — nunca do TOML.
+
+### Segredos
+
+```bash
+dealhunter secrets status
+dealhunter secrets set DEALHUNTER_SMTP_PASSWORD
+printf '%s\n' "$TOKEN" | dealhunter secrets set DEALHUNTER_MELI_ACCESS_TOKEN --stdin
+dealhunter secrets delete DEALHUNTER_SMTP_PASSWORD --yes
+```
+
+A precedência é **variável de ambiente > keyring**. `status` mostra apenas a
+origem, nunca o valor. O cofre é opcional (`.[secrets]`); sem ele, use apenas
+variáveis de ambiente. Em `--json`, use `--stdin` para não misturar o prompt com
+o envelope. `DEALHUNTER_DISABLE_KEYRING=1` desativa o cofre em CI/headless.
 
 ### Privacidade e LGPD
 
@@ -366,7 +383,8 @@ feed_urls = []                  # feeds JSON de lojas/afiliados
 retention_days = 90             # eventos/notificações mais antigos
 ```
 
-**Segredos nunca vão no TOML** — apenas o nome da variável de ambiente (keyring previsto).
+**Segredos nunca vão no TOML**. O arquivo guarda apenas o nome da variável de
+ambiente; o valor pode vir dela ou do keyring (ambiente tem precedência).
 
 ### Fonte `feed` (adapter genérico)
 

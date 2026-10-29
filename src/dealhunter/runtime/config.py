@@ -6,7 +6,7 @@ Precedência (do mais forte para o mais fraco)::
                   >  ./.dealhunter.toml (projeto)  >  config do usuário  >  defaults
 
 Segredos (tokens, senhas) **não** moram no TOML: o arquivo guarda apenas o nome
-da credencial no keyring ou da variavel de ambiente correspondente.
+da variável de ambiente; o valor pode vir dela ou do keyring opcional.
 """
 
 from __future__ import annotations

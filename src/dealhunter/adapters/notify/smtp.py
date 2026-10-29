@@ -1,7 +1,7 @@
 """Canal de e-mail via SMTP.
 
-A senha **nunca** fica na configuração: vem de variavel de ambiente (ou do
-keyring, numa fase seguinte). Sem host configurado, o canal não e registrado.
+A senha **nunca** fica na configuração: vem de variável de ambiente ou do
+keyring opcional. Sem host configurado, o canal não é registrado.
 """
 
 from __future__ import annotations

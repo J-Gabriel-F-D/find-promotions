@@ -61,7 +61,7 @@ Query (natural | flags)
 | Parse | selectolax / lxml | Rápido e tolerante a HTML quebrado |
 | Banco | SQLite (WAL) via stdlib/SQLAlchemy | Zero ops; migração futura para Postgres |
 | Logs | structlog | JSON estruturado + redação de segredos |
-| Secrets | env (keyring previsto) | Variáveis de ambiente; cofre do SO em fase futura |
+| Secrets | env > keyring opcional | Variáveis de ambiente primeiro; cofre do SO via extra `[secrets]` |
 | Testes | pytest, respx, hypothesis | Unit, contrato por adapter, property-based |
 
 ## 5. Banco de dados
@@ -212,8 +212,9 @@ determinístico como fallback, guard que rejeita números não rastreáveis.
 Entrada validada por Pydantic · URLs apenas `http(s)` com bloqueio de IP
 privado/link-local/metadata e rechecagem pós-DNS (anti-SSRF) · texto raspado
 tratado como não confiável (strip de ANSI/controle antes de renderizar) · SQL
-parametrizado · segredos em variáveis de ambiente (keyring previsto) · redação
-em logs · permissões restritas no banco · auditoria de mudanças de estado.
+parametrizado · segredos em variáveis de ambiente ou keyring opcional (env tem
+precedência) · redação em logs · permissões restritas no banco · auditoria de
+mudanças de estado.
 
 ## 14. LGPD
 
@@ -259,7 +260,7 @@ envelope `--json`, exit codes.
 | Desconto | `likely_real` / `normal` / `suspicious` / `insufficient_evidence`, sempre com evidência textual |
 | Ranking | `deal_score` de oportunidade (preço/frete/histórico), picks `best`/`cheapest`; `safest`/`flash` = `null` |
 | Alertas | regras `max-price`/`discount`, canais console/SMTP, dedupe por faixa de R$ 50, pausar/retomar/remover |
-| CLI | `search`, `history`, `alerts`, `notify`, `privacy`, `sources`, além de `status`/`db`/`config` |
+| CLI | `search`, `history`, `alerts`, `notify`, `privacy`, `secrets`, `sources`, além de `status`/`db`/`config` |
 
 Desvios conscientes em relação ao desenho original:
 

@@ -1,8 +1,8 @@
 """Adapter do Mercado Livre (API publica oficial).
 
 Documentação: https://developers.mercadolivre.com.br
-Usa ``/sites/{site}/search``; não faz scraping de HTML. Um token de aplicação e
-opcional (aumenta limites), lido de variavel de ambiente ou keyring.
+Usa ``/sites/{site}/search``; não faz scraping de HTML. Um token de aplicação é
+opcional (aumenta limites), lido de variável de ambiente ou do keyring.
 """
 
 from __future__ import annotations

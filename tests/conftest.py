@@ -16,6 +16,12 @@ from dealhunter.domain.value_objects.money import Money
 from dealhunter.runtime.paths import AppPaths, resolve_paths
 
 
+@pytest.fixture(autouse=True)
+def _disable_real_keyring(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Nenhum teste toca no cofre real do sistema operacional."""
+    monkeypatch.setenv("DEALHUNTER_DISABLE_KEYRING", "1")
+
+
 @pytest.fixture()
 def isolated_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[AppPaths]:
     """Isola config/dados/logs em um diretorio temporario."""

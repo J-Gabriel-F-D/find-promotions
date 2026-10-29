@@ -44,7 +44,7 @@ detect-secrets, pip-audit e a suíte completa com cobertura. As ferramentas de
 segurança são opcionais no runtime e podem ser instaladas com:
 
 ```bash
-python -m pip install -e ".[dev,security]"
+python -m pip install -e ".[dev,security,secrets]"
 ```
 
 ## Organização
@@ -69,17 +69,20 @@ Os marcadores são aplicados automaticamente pelo diretório em
   `127.0.0.1`; o bloqueio de SSRF é desativado apenas nesse servidor local.
 - E-mail usa `smtplib.SMTP` mockado. Nenhuma mensagem real é enviada.
 - Segredos, tokens, e-mails e telefones usados em testes são fictícios.
+- Nenhum teste acessa o cofre real: `keyring` é substituído por backend falso.
 - Datas e relógios são congelados quando o teste depende de janelas/idade de
   histórico.
 - Privacidade cobre exportação, opt-in de contatos, esquecimento com `--yes`,
   retenção simulada e aplicada, cascata de exclusão, minimização e preservação
   da deduplicação contra spam após a retenção.
+- Segredos cobrem precedência env/keyring, backend indisponível/falho, nomes
+  inválidos, ausência de eco e comandos `status`/`set`/`delete`.
 
 ## Cobertura atual
 
-- 439 testes aprovados, 3 ignorados (permissões POSIX e cenários dependentes de
+- 456 testes aprovados, 3 ignorados (permissões POSIX e cenários dependentes de
   plataforma), em Windows/Python 3.14.5.
-- Cobertura combinada: **87,15%** (limite mínimo configurado: 85%).
+- Cobertura combinada: **86,99%** (limite mínimo configurado: 85%).
 - `ruff format --check`, `ruff check` e `mypy src` sem erros.
 - `bandit -r src`: sem achados (o jitter de retry é marcado como `nosec B311`,
   pois não é usado para criptografia).
@@ -95,7 +98,6 @@ isso não são testados como se existissem:
 - score de confiança/antifraude e análise de reclamações individuais;
 - comando `monitor` contínuo;
 - SMS e WhatsApp (o WhatsApp só pode usar API oficial);
-- integração com keyring;
 - linhas individuais de avaliações (hoje há apenas o agregado publicado).
 
 Esses pontos permanecem registrados como risco ou funcionalidade pendente, não

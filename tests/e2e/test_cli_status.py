@@ -26,7 +26,7 @@ def test_version() -> None:
 def test_help_lista_comandos(tmp_path: Path) -> None:
     result = _invoke(tmp_path, ["--help"])
     assert result.exit_code == 0
-    for command in ("status", "config", "db"):
+    for command in ("status", "config", "db", "privacy", "secrets"):
         assert command in result.output
 
 

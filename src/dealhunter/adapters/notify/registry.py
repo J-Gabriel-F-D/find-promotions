@@ -9,6 +9,7 @@ from dealhunter.adapters.notify.base import Notifier, is_valid_email
 from dealhunter.adapters.notify.console import ConsoleChannel
 from dealhunter.adapters.notify.smtp import SmtpChannel
 from dealhunter.runtime.config import NotificationSettings
+from dealhunter.runtime.secrets import SecretStore
 
 
 def build_notifier(
@@ -16,9 +17,11 @@ def build_notifier(
     *,
     printer: Callable[[str], None],
     environ: Mapping[str, str] | None = None,
+    secrets: SecretStore | None = None,
 ) -> tuple[Notifier, list[str]]:
     """Registra apenas canais realmente utilizaveis; devolve avisos do resto."""
     environ = os.environ if environ is None else environ
+    store = secrets or SecretStore(environ=environ)
     channels: dict[str, object] = {"console": ConsoleChannel(printer)}
     warnings: list[str] = []
 
@@ -37,7 +40,7 @@ def build_notifier(
                 sender=sender,
                 recipient=settings.email_to,
                 user=settings.smtp_user,
-                password=environ.get(settings.smtp_password_env) or None,
+                password=store.get(settings.smtp_password_env),
                 use_starttls=settings.use_starttls,
             )
 

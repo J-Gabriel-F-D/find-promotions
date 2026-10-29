@@ -17,6 +17,7 @@ from dealhunter.adapters.sources.fixture import FixtureAdapter
 from dealhunter.adapters.sources.mercadolivre import MercadoLivreAdapter
 from dealhunter.domain.ports.clock import Clock
 from dealhunter.runtime.config import SourcesSettings
+from dealhunter.runtime.secrets import SecretStore
 
 KNOWN_SOURCES = ("mercadolivre", "feed", "fixture")
 
@@ -27,9 +28,11 @@ def build_adapters(
     *,
     clock: Clock | None = None,
     environ: Mapping[str, str] | None = None,
+    secrets: SecretStore | None = None,
 ) -> tuple[list[SourceAdapter], list[str]]:
     """Devolve ``(adapters, avisos)`` para os IDs habilitados."""
     environ = os.environ if environ is None else environ
+    store = secrets or SecretStore(environ=environ)
     adapters: list[SourceAdapter] = []
     warnings: list[str] = []
     robots = RobotsGuard(http, user_agent=settings.user_agent) if settings.respect_robots else None
@@ -40,7 +43,7 @@ def build_adapters(
             continue
 
         if source_id == "mercadolivre":
-            token = environ.get(settings.mercadolivre_token_env) or None
+            token = store.get(settings.mercadolivre_token_env)
             adapters.append(MercadoLivreAdapter(http, access_token=token))
         elif source_id == "fixture":
             adapters.append(FixtureAdapter(clock=clock))
