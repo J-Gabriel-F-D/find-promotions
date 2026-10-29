@@ -71,12 +71,15 @@ Os marcadores são aplicados automaticamente pelo diretório em
 - Segredos, tokens, e-mails e telefones usados em testes são fictícios.
 - Datas e relógios são congelados quando o teste depende de janelas/idade de
   histórico.
+- Privacidade cobre exportação, opt-in de contatos, esquecimento com `--yes`,
+  retenção simulada e aplicada, cascata de exclusão, minimização e preservação
+  da deduplicação contra spam após a retenção.
 
 ## Cobertura atual
 
-- 430 testes aprovados, 3 ignorados (permissões POSIX e cenários dependentes de
+- 439 testes aprovados, 3 ignorados (permissões POSIX e cenários dependentes de
   plataforma), em Windows/Python 3.14.5.
-- Cobertura combinada: **87,22%** (limite mínimo configurado: 85%).
+- Cobertura combinada: **87,15%** (limite mínimo configurado: 85%).
 - `ruff format --check`, `ruff check` e `mypy src` sem erros.
 - `bandit -r src`: sem achados (o jitter de retry é marcado como `nosec B311`,
   pois não é usado para criptografia).
@@ -93,7 +96,6 @@ isso não são testados como se existissem:
 - comando `monitor` contínuo;
 - SMS e WhatsApp (o WhatsApp só pode usar API oficial);
 - integração com keyring;
-- comandos LGPD de exportação/esquecimento;
 - linhas individuais de avaliações (hoje há apenas o agregado publicado).
 
 Esses pontos permanecem registrados como risco ou funcionalidade pendente, não

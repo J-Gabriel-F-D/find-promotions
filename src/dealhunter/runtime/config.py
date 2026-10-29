@@ -91,6 +91,12 @@ class SourcesSettings(BaseModel):
     requests_per_minute: int = Field(default=30, ge=1, le=600)
 
 
+class PrivacySettings(BaseModel):
+    """Retenção local de dados pessoais (alertas e notificações)."""
+
+    retention_days: int = Field(default=90, ge=1, le=3_650)
+
+
 class AppConfig(BaseSettings):
     """Configuração efetiva, ja validada."""
 
@@ -107,6 +113,7 @@ class AppConfig(BaseSettings):
     ai: AISettings = Field(default_factory=AISettings)
     notifications: NotificationSettings = Field(default_factory=NotificationSettings)
     sources: SourcesSettings = Field(default_factory=SourcesSettings)
+    privacy: PrivacySettings = Field(default_factory=PrivacySettings)
 
 
 @dataclass(frozen=True, slots=True)

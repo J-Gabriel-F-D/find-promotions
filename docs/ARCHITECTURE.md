@@ -61,7 +61,7 @@ Query (natural | flags)
 | Parse | selectolax / lxml | Rápido e tolerante a HTML quebrado |
 | Banco | SQLite (WAL) via stdlib/SQLAlchemy | Zero ops; migração futura para Postgres |
 | Logs | structlog | JSON estruturado + redação de segredos |
-| Secrets | keyring (+ env) | Credential Manager / Keychain / libsecret |
+| Secrets | env (keyring previsto) | Variáveis de ambiente; cofre do SO em fase futura |
 | Testes | pytest, respx, hypothesis | Unit, contrato por adapter, property-based |
 
 ## 5. Banco de dados
@@ -212,14 +212,14 @@ determinístico como fallback, guard que rejeita números não rastreáveis.
 Entrada validada por Pydantic · URLs apenas `http(s)` com bloqueio de IP
 privado/link-local/metadata e rechecagem pós-DNS (anti-SSRF) · texto raspado
 tratado como não confiável (strip de ANSI/controle antes de renderizar) · SQL
-parametrizado · segredos em keyring · redação em logs · permissões restritas no
-banco · auditoria de mudanças de estado.
+parametrizado · segredos em variáveis de ambiente (keyring previsto) · redação
+em logs · permissões restritas no banco · auditoria de mudanças de estado.
 
 ## 14. LGPD
 
 PII mínima (e-mail/telefone só com opt-in) · retenção configurável ·
-`privacy export` / `privacy forget` · consentimento registrado por canal ·
-nenhum texto com PII enviado a LLM.
+`privacy export` / `privacy forget` / `privacy retention` · consentimento por
+canal na configuração · nenhum texto com PII enviado a LLM.
 
 ## 15. Observabilidade
 
@@ -259,7 +259,7 @@ envelope `--json`, exit codes.
 | Desconto | `likely_real` / `normal` / `suspicious` / `insufficient_evidence`, sempre com evidência textual |
 | Ranking | `deal_score` de oportunidade (preço/frete/histórico), picks `best`/`cheapest`; `safest`/`flash` = `null` |
 | Alertas | regras `max-price`/`discount`, canais console/SMTP, dedupe por faixa de R$ 50, pausar/retomar/remover |
-| CLI | `search`, `history`, `alerts`, `notify`, `sources`, além de `status`/`db`/`config` |
+| CLI | `search`, `history`, `alerts`, `notify`, `privacy`, `sources`, além de `status`/`db`/`config` |
 
 Desvios conscientes em relação ao desenho original:
 

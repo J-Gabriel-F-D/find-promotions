@@ -782,6 +782,94 @@ class SqliteRepository:
             cursor = connection.execute("DELETE FROM alert WHERE id = ?", (alert_id,))
             return cursor.rowcount > 0
 
+    def count_personal_records(self) -> dict[str, int]:
+        """Contagem de registros com potencial dado pessoal."""
+        with self._db.connect() as connection:
+            row = connection.execute(
+                "SELECT (SELECT COUNT(*) FROM alert), "
+                "(SELECT COUNT(*) FROM alert_event), "
+                "(SELECT COUNT(*) FROM notification), "
+                "(SELECT COUNT(*) FROM alert_dedupe)"
+            ).fetchone()
+        return {
+            "alert": int(row[0]) if row else 0,
+            "alert_event": int(row[1]) if row else 0,
+            "notification": int(row[2]) if row else 0,
+            "alert_dedupe": int(row[3]) if row else 0,
+        }
+
+    def export_personal_data(self) -> dict[str, list[dict[str, object]]]:
+        """Exporta apenas metadados pessoais; não inclui corpos/erros de envio."""
+        with self._db.connect() as connection:
+            alerts = [
+                dict(row)
+                for row in connection.execute(
+                    "SELECT id, label, query, max_price_cents, min_discount_pct, "
+                    "channels_json AS channels, active, created_at, last_checked_at "
+                    "FROM alert ORDER BY id"
+                ).fetchall()
+            ]
+            events = [
+                dict(row)
+                for row in connection.execute(
+                    "SELECT id, alert_id, offer_id, price_cents, reason, created_at "
+                    "FROM alert_event ORDER BY id"
+                ).fetchall()
+            ]
+            notifications = [
+                dict(row)
+                for row in connection.execute(
+                    "SELECT id, event_id, channel, status, attempts, created_at "
+                    "FROM notification ORDER BY id"
+                ).fetchall()
+            ]
+        return {"alerts": alerts, "events": events, "notifications": notifications}
+
+    def count_personal_records_before(self, cutoff: datetime) -> dict[str, int]:
+        with self._db.connect() as connection:
+            moment = iso(cutoff)
+            return {
+                "events": int(
+                    connection.execute(
+                        "SELECT COUNT(*) FROM alert_event WHERE created_at < ?", (moment,)
+                    ).fetchone()[0]
+                ),
+                "notifications": int(
+                    connection.execute(
+                        "SELECT COUNT(*) FROM notification WHERE created_at < ?", (moment,)
+                    ).fetchone()[0]
+                ),
+            }
+
+    def delete_personal_records_before(self, cutoff: datetime) -> dict[str, int]:
+        """Remove eventos e notificações antigos, preservando alertas e dedupe.
+
+        O ``alert_event`` detalhado pode sair, mas a chave em ``alert_dedupe``
+        fica enquanto o alerta existir para impedir notificações repetidas.
+        """
+        counts = self.count_personal_records_before(cutoff)
+        moment = iso(cutoff)
+        with self._db.connect() as connection:
+            # A exclusão do evento remove notificações por cascata; a segunda
+            # instrução cobre notificações órfãs (event_id NULL).
+            connection.execute("DELETE FROM alert_event WHERE created_at < ?", (moment,))
+            connection.execute("DELETE FROM notification WHERE created_at < ?", (moment,))
+        return counts
+
+    def purge_personal_data(self) -> dict[str, int]:
+        """Apaga alertas, eventos, notificações e chaves de dedupe locais."""
+        counts = self.count_personal_records()
+        with self._db.connect() as connection:
+            # A FK em cascata remove eventos/notificações/dedupe dos alertas.
+            connection.execute("DELETE FROM alert")
+            connection.execute("DELETE FROM alert_event")
+            connection.execute("DELETE FROM notification")
+            connection.execute("DELETE FROM alert_dedupe")
+        return counts
+
+    def vacuum(self) -> None:
+        self._db.vacuum()
+
     def touch_alert(self, alert_id: int, now: datetime) -> None:
         with self._db.connect() as connection:
             connection.execute(
@@ -798,8 +886,21 @@ class SqliteRepository:
         dedupe_key: str,
         now: datetime,
     ) -> int | None:
-        """Registra o evento; devolve ``None`` se ja existia (dedupe)."""
+        """Registra o evento; devolve ``None`` se ja existia (dedupe).
+
+        A chave é gravada em ``alert_dedupe`` mesmo que o evento detalhado seja
+        removido pela retenção, preservando a proteção contra spam.
+        """
         with self._db.connect() as connection:
+            cursor = connection.execute(
+                """
+                INSERT OR IGNORE INTO alert_dedupe (dedupe_key, alert_id, created_at)
+                VALUES (?, ?, ?)
+                """,
+                (dedupe_key, alert_id, iso(now)),
+            )
+            if cursor.rowcount == 0:
+                return None
             cursor = connection.execute(
                 """
                 INSERT OR IGNORE INTO alert_event

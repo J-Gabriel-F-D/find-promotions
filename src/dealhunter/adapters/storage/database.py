@@ -81,6 +81,7 @@ class Database:
             connection.execute("PRAGMA foreign_keys=ON")
             connection.execute("PRAGMA busy_timeout=5000")
             connection.execute("PRAGMA synchronous=NORMAL")
+            connection.execute("PRAGMA secure_delete=ON")
             yield connection
             connection.commit()
         except Exception:
@@ -126,6 +127,21 @@ class Database:
         with self.connect() as connection:
             row = connection.execute("PRAGMA integrity_check").fetchone()
         return bool(row) and row[0] == "ok"
+
+    def vacuum(self) -> None:
+        """Compacta o banco após exclusões de dados pessoais.
+
+        ``secure_delete`` sobrescreve páginas liberadas; o ``VACUUM`` remove
+        resíduos do arquivo principal. O checkpoint reduz o WAL.
+        """
+        if not self.exists:
+            return
+        connection = sqlite3.connect(self._path, timeout=5.0)
+        try:
+            connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            connection.execute("VACUUM")
+        finally:
+            connection.close()
 
     def _pending_migrations(self, done: set[str]) -> list[tuple[str, str]]:
         if not self._migrations_dir.is_dir():

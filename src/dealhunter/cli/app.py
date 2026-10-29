@@ -21,6 +21,7 @@ from dealhunter.cli.commands import config as config_cmd
 from dealhunter.cli.commands import coupons as coupons_cmd
 from dealhunter.cli.commands import db as db_cmd
 from dealhunter.cli.commands import notify as notify_cmd
+from dealhunter.cli.commands import privacy as privacy_cmd
 from dealhunter.cli.commands import sources as sources_cmd
 from dealhunter.cli.commands.history import history_command
 from dealhunter.cli.commands.promotions import promotions_command
@@ -49,6 +50,7 @@ app.add_typer(config_cmd.app, name="config")
 app.add_typer(db_cmd.app, name="db")
 app.add_typer(alerts_cmd.app, name="alerts")
 app.add_typer(notify_cmd.app, name="notify")
+app.add_typer(privacy_cmd.app, name="privacy")
 app.add_typer(sources_cmd.app, name="sources")
 app.add_typer(coupons_cmd.app, name="coupons")
 app.command("status", help="Diagnóstico do ambiente local (versão, banco, fontes, IA).")(

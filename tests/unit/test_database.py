@@ -14,7 +14,8 @@ def test_migrate_cria_schema(tmp_path: Path) -> None:
     result = database.migrate()
     assert "0001_init" in result.applied
     assert "0002_mvp" in result.applied
-    assert database.schema_version() == "0003_fase2"
+    assert "0004_privacidade" in result.applied
+    assert database.schema_version() == "0004_privacidade"
     assert database.integrity_check() is True
 
 
@@ -35,6 +36,7 @@ def test_tabela_de_auditoria_existe(tmp_path: Path) -> None:
         }
     assert "audit_log" in tables
     assert "schema_migration" in tables
+    assert "alert_dedupe" in tables
 
 
 def test_pragmas_aplicados(tmp_path: Path) -> None:
@@ -42,6 +44,7 @@ def test_pragmas_aplicados(tmp_path: Path) -> None:
     with database.connect() as connection:
         assert connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
         assert connection.execute("PRAGMA journal_mode").fetchone()[0].lower() == "wal"
+        assert connection.execute("PRAGMA secure_delete").fetchone()[0] == 1
 
 
 def test_banco_sem_migracao_nao_quebra(tmp_path: Path) -> None:

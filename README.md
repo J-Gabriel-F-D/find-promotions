@@ -144,6 +144,25 @@ dealhunter notify test --channel console
 
 E-mail usa SMTP (`smtplib`). A senha vem de `DEALHUNTER_SMTP_PASSWORD` — nunca do TOML.
 
+### Privacidade e LGPD
+
+```bash
+dealhunter privacy export --json                 # dados pessoais em JSON
+dealhunter privacy export --include-contacts     # inclui e-mails reais (opt-in)
+dealhunter privacy export --output backup.json   # arquivo privado (600 no POSIX)
+dealhunter privacy forget --yes                  # apaga alertas, eventos e notificações
+dealhunter privacy retention                    # simula a janela configurada
+dealhunter privacy retention --days 90 --apply  # executa a retenção
+```
+
+A exportação contém alertas, eventos e metadados de notificação; contatos do
+perfil aparecem mascarados por padrão (`--include-contacts` revela os e-mails
+reais). `forget` não altera o `config.toml` — remova
+e-mails/SMTP manualmente se quiser eliminar também esses dados. O catálogo
+público de produtos e preços não é apagado. A retenção remove eventos e
+notificações antigos, mas preserva a chave de deduplicação enquanto o alerta
+existir, para não reenviar a mesma oferta; `forget` apaga também essas chaves.
+
 ### Cupons
 
 ```bash
@@ -342,9 +361,12 @@ channels = ["console"]
 enabled = ["mercadolivre"]      # "fixture" só para demonstração
 respect_robots = true
 feed_urls = []                  # feeds JSON de lojas/afiliados
+
+[privacy]
+retention_days = 90             # eventos/notificações mais antigos
 ```
 
-**Segredos nunca vão no TOML** — apenas o nome da variável de ambiente ou a entrada do keyring.
+**Segredos nunca vão no TOML** — apenas o nome da variável de ambiente (keyring previsto).
 
 ### Fonte `feed` (adapter genérico)
 
