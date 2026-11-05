@@ -25,6 +25,7 @@ from dealhunter.cli.commands import privacy as privacy_cmd
 from dealhunter.cli.commands import secrets as secrets_cmd
 from dealhunter.cli.commands import sources as sources_cmd
 from dealhunter.cli.commands.history import history_command
+from dealhunter.cli.commands.interactive import interactive_command
 from dealhunter.cli.commands.promotions import promotions_command
 from dealhunter.cli.commands.reviews import reviews_command
 from dealhunter.cli.commands.search import search_command
@@ -63,7 +64,12 @@ app.command("history", help="Histórico de preços e estatísticas de um produto
 app.command("promotions", help="Promoções com janela temporal coletadas nas buscas.")(
     promotions_command
 )
-app.command("reviews", help="Agregado de avaliações publicado pela fonte.")(reviews_command)
+app.command("reviews", help="Agregado e análise de avaliações publicadas pela fonte.")(
+    reviews_command
+)
+app.command("interactive", help="REPL simples para explorar ofertas (sem shell escape).")(
+    interactive_command
+)
 
 
 def _print_version() -> None:

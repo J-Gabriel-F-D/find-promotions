@@ -28,6 +28,7 @@ from dealhunter.domain.models import (
     Product,
     Promotion,
     ReviewSummary,
+    ReviewText,
     Seller,
     Store,
 )
@@ -387,6 +388,38 @@ class SqliteRepository:
                 reviews.confidence,
             ),
         )
+        for text in reviews.texts:
+            connection.execute(
+                """
+                INSERT INTO review_text (
+                    id, review_id, product_id, store_id, rating, title, body,
+                    reviewed_at, source, source_url, collected_at,
+                    last_verified_at, confidence
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT (id) DO UPDATE SET
+                    source_url = excluded.source_url,
+                    collected_at = excluded.collected_at,
+                    last_verified_at = COALESCE(
+                        excluded.last_verified_at, review_text.last_verified_at
+                    ),
+                    confidence = excluded.confidence
+                """,
+                (
+                    text.id,
+                    reviews.id,
+                    text.product_id,
+                    text.store_id,
+                    text.rating,
+                    text.title,
+                    text.body,
+                    iso(text.reviewed_at) if text.reviewed_at else None,
+                    text.source,
+                    text.source_url,
+                    iso(text.collected_at or reviews.collected_at or datetime.now(UTC)),
+                    iso(text.last_verified_at) if text.last_verified_at else None,
+                    text.confidence,
+                ),
+            )
 
     # ------------------------------------------------------------------ leitura
     def find_products(self, term: str, *, limit: int = 10) -> list[tuple[str, str]]:
@@ -670,7 +703,7 @@ class SqliteRepository:
             for row in rows
         ]
 
-    def reviews_for_product(self, product_id: str) -> list[ReviewRow]:
+    def reviews_for_product(self, product_id: str, *, text_limit: int = 100) -> list[ReviewRow]:
         with self._db.connect() as connection:
             rows = connection.execute(
                 """
@@ -683,6 +716,36 @@ class SqliteRepository:
                 """,
                 (product_id,),
             ).fetchall()
+            text_rows = connection.execute(
+                """
+                SELECT * FROM review_text
+                WHERE product_id = ?
+                ORDER BY (reviewed_at IS NULL), reviewed_at DESC, collected_at DESC
+                """,
+                (product_id,),
+            ).fetchall()
+
+        by_review: dict[str, list[ReviewText]] = {}
+        for row in text_rows:
+            by_review.setdefault(row["review_id"], []).append(
+                ReviewText(
+                    product_id=row["product_id"],
+                    store_id=row["store_id"],
+                    source=row["source"],
+                    source_url=row["source_url"],
+                    rating=row["rating"],
+                    body=row["body"],
+                    title=row["title"],
+                    reviewed_at=parse_iso(row["reviewed_at"]) if row["reviewed_at"] else None,
+                    collected_at=parse_iso(row["collected_at"]),
+                    last_verified_at=parse_iso(row["last_verified_at"])
+                    if row["last_verified_at"]
+                    else None,
+                    confidence=row["confidence"],
+                )
+            )
+
+        limit = max(0, text_limit)
         return [
             ReviewRow(
                 review=ReviewSummary(
@@ -701,6 +764,7 @@ class SqliteRepository:
                     if row["last_verified_at"]
                     else None,
                     confidence=row["confidence"],
+                    texts=tuple(by_review.get(row["id"], [])[:limit]),
                 ),
                 product_title=row["product_title"],
                 store_name=row["store_name"],

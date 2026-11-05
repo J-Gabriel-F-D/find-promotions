@@ -135,7 +135,7 @@ class TestComandoPromocoes:
 
 
 class TestComandoAvaliacoes:
-    def test_mostra_agregado_da_fonte(self, tmp_path: Path) -> None:
+    def test_mostra_agregado_e_analise_da_fonte(self, tmp_path: Path) -> None:
         _search(tmp_path, "redmi note 14 256GB")
         result = _invoke(tmp_path, ["--json", "reviews", "redmi"])
         assert result.exit_code == 0, result.output
@@ -147,15 +147,80 @@ class TestComandoAvaliacoes:
         assert 0 <= source["rating"] <= 5
         assert source["count"] > 0
         assert "distribution" in source
-        assert any("Fase 3" in warning for warning in payload["warnings"])
+        assert source["text_count"] >= 1
+        assert "texts" not in source
+        analysis = source["analysis"]
+        assert analysis["sample_size"] >= 1
+        assert analysis["analysis_confidence"] > 0
+        assert analysis["rules_version"] == "reviews-v1"
+        assert "não confirma fraude" in analysis["disclaimer"]
+        assert any("menções" in warning for warning in payload["warnings"])
+
+    def test_include_text_expoe_amostras_e_evidencias(self, tmp_path: Path) -> None:
+        _search(tmp_path, "redmi note 14 256GB")
+        result = _invoke(tmp_path, ["--json", "reviews", "redmi", "--include-text", "--limit", "2"])
+        assert result.exit_code == 0, result.output
+
+        payload = json.loads(result.output)
+        source = payload["sources"][0]
+        assert len(source["texts"]) == 2
+        assert source["analysis"]["sample_size"] == 2
+        assert "[demonstração]" in source["texts"][0]["body"]
+        snippets = [
+            evidence["snippet"]
+            for complaint in source["analysis"]["complaints"]
+            for evidence in complaint["evidence"]
+        ]
+        assert snippets
+        assert all(snippet for snippet in snippets)
+
+    def test_resolve_por_id_da_oferta_e_do_produto(self, tmp_path: Path) -> None:
+        _search(tmp_path, "redmi note 14 256GB")
+        search = json.loads(
+            _invoke(
+                tmp_path, ["--json", "search", "redmi note 14 256GB", "--source", "fixture"]
+            ).output
+        )
+        first = search["results"][0]
+
+        by_offer = _invoke(tmp_path, ["--json", "reviews", first["offer_id"]])
+        assert by_offer.exit_code == 0, by_offer.output
+        by_product = _invoke(tmp_path, ["--json", "reviews", first["product_id"]])
+        assert by_product.exit_code == 0, by_product.output
+
+        offer_payload = json.loads(by_offer.output)
+        product_payload = json.loads(by_product.output)
+        assert offer_payload["product"]["id"] == product_payload["product"]["id"]
+        assert offer_payload["sources"]
+
+    def test_termo_ambiguo_avisa_e_escolhe_o_mais_recente(self, tmp_path: Path) -> None:
+        _search(tmp_path, "redmi")
+        result = _invoke(tmp_path, ["--json", "reviews", "GB"])
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.output)
+        assert any("produtos correspondem" in warning for warning in payload["warnings"])
+
+    def test_oferta_inexistente_sai_com_codigo_3(self, tmp_path: Path) -> None:
+        result = _invoke(tmp_path, ["reviews", "off_naoexiste"])
+        assert result.exit_code == 3
+        assert "oferta não encontrada" in result.output
 
     def test_produto_sem_avaliacao_sai_com_codigo_3(self, tmp_path: Path) -> None:
         result = _invoke(tmp_path, ["reviews", "produto que nunca existiu"])
         assert result.exit_code == 3
 
-    def test_saida_humana_inclui_estrelas(self, tmp_path: Path) -> None:
+    def test_saida_humana_inclui_estrelas_e_analise(self, tmp_path: Path) -> None:
         _search(tmp_path, "redmi note 14 256GB")
         result = _invoke(tmp_path, ["reviews", "redmi"])
         assert result.exit_code == 0, result.output
         assert "avaliações" in result.output
-        assert "5★" in result.output
+        assert "Textos analisados" in result.output
+        assert "Reclamações mencionadas" in result.output
+        assert "\x1b[" not in result.output
+
+    def test_saida_humana_com_texto_e_escapada(self, tmp_path: Path) -> None:
+        _search(tmp_path, "redmi note 14 256GB")
+        result = _invoke(tmp_path, ["reviews", "redmi", "--include-text", "--limit", "1"])
+        assert result.exit_code == 0, result.output
+        assert "[demonstração]" in result.output
+        assert "\x1b[" not in result.output

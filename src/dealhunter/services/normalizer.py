@@ -7,6 +7,7 @@ marca+modelo+capacidade). Caso contrario, cada titulo vira um produto proprio.
 
 from __future__ import annotations
 
+import re
 from dataclasses import replace
 from datetime import datetime
 
@@ -17,6 +18,7 @@ from dealhunter.domain.models import (
     Product,
     Promotion,
     ReviewSummary,
+    ReviewText,
     Seller,
     Store,
 )
@@ -29,6 +31,21 @@ from dealhunter.services.text import (
     parse_ram_gb,
     parse_storage_gb,
 )
+
+_MAX_REVIEW_BODY = 4_000
+_MAX_REVIEW_TITLE = 200
+_CONTROL = re.compile(
+    r"\x1b\[[0-?]*[ -/]*[@-~]"
+    r"|[\x00-\x08\x0b-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]"
+)
+
+
+def _clean_review_text(value: str, *, limit: int) -> str | None:
+    """Remove controles/ANSI e limita tamanho; nunca inventa conteúdo."""
+    cleaned = " ".join(_CONTROL.sub("", value).split())
+    if not cleaned or len(cleaned) > limit:
+        return None
+    return cleaned
 
 
 class ProductNormalizer:
@@ -180,6 +197,26 @@ class ProductNormalizer:
             for score, count in raw.distribution.items()
             if 1 <= int(score) <= 5 and int(count) >= 0
         }
+        texts: list[ReviewText] = []
+        for item in raw.items:
+            body = _clean_review_text(item.body, limit=_MAX_REVIEW_BODY)
+            title = _clean_review_text(item.title, limit=_MAX_REVIEW_TITLE) or ""
+            if body is None or not 1 <= item.rating <= 5:
+                continue
+            texts.append(
+                ReviewText(
+                    product_id=product.id,
+                    store_id=store.id,
+                    source=collected.source_id,
+                    source_url=collected.source_url,
+                    rating=item.rating,
+                    body=body,
+                    title=title,
+                    reviewed_at=item.reviewed_at,
+                    collected_at=collected.collected_at,
+                    confidence=item.confidence,
+                )
+            )
         return ReviewSummary(
             product_id=product.id,
             store_id=store.id,
@@ -190,6 +227,7 @@ class ProductNormalizer:
             distribution=distribution,
             collected_at=collected.collected_at,
             confidence=raw.confidence,
+            texts=tuple(texts),
         )
 
 

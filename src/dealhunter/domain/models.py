@@ -135,12 +135,29 @@ class CollectedPromotion:
 
 
 @dataclass(frozen=True, slots=True)
+class CollectedReview:
+    """Linha individual de avaliação declarada pela fonte.
+
+    O autor nunca é armazenado: o objetivo é analisar o conteúdo publicado,
+    não identificar quem escreveu. Textos só entram por feed/fixture, nunca
+    por scraping de HTML.
+    """
+
+    rating: int
+    body: str
+    title: str = ""
+    reviewed_at: datetime | None = None
+    confidence: float = 0.5
+
+
+@dataclass(frozen=True, slots=True)
 class CollectedReviews:
     """Agregado de avaliações publicado pela fonte (nunca texto inventado)."""
 
     rating: float
     count: int
     distribution: dict[int, int] = field(default_factory=dict)
+    items: tuple[CollectedReview, ...] = ()
     confidence: float = 0.6
 
 
@@ -293,8 +310,38 @@ class Promotion:
 
 
 @dataclass(frozen=True, slots=True)
+class ReviewText:
+    """Texto individual normalizado de uma avaliação publicada pela fonte."""
+
+    product_id: str
+    store_id: str
+    source: str
+    source_url: str
+    rating: int
+    body: str
+    title: str = ""
+    reviewed_at: datetime | None = None
+    collected_at: datetime | None = None
+    last_verified_at: datetime | None = None
+    confidence: float = 0.5
+
+    @property
+    def id(self) -> str:
+        return stable_id(
+            "rvt",
+            self.product_id,
+            self.store_id,
+            self.source,
+            str(self.rating),
+            self.reviewed_at.isoformat() if self.reviewed_at else "",
+            self.title,
+            self.body,
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class ReviewSummary:
-    """Agregado de avaliações publicado por uma loja (sem texto individual)."""
+    """Agregado publicado por uma loja, com textos individuais opcionais."""
 
     product_id: str
     store_id: str
@@ -306,6 +353,7 @@ class ReviewSummary:
     collected_at: datetime | None = None
     last_verified_at: datetime | None = None
     confidence: float = 0.5
+    texts: tuple[ReviewText, ...] = ()
 
     @property
     def id(self) -> str:

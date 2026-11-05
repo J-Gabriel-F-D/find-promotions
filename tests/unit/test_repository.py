@@ -9,7 +9,7 @@ import pytest
 
 from dealhunter.adapters.storage.database import Database
 from dealhunter.adapters.storage.repository import SqliteRepository
-from dealhunter.domain.models import Coupon, Promotion, ReviewSummary
+from dealhunter.domain.models import Coupon, Promotion, ReviewSummary, ReviewText
 from dealhunter.domain.value_objects.money import Money
 
 
@@ -198,6 +198,64 @@ class TestCuponsPromocoesAvaliacoes:
         assert len(reviews) == 1
         assert reviews[0].review.rating_count == 100
         assert reviews[0].review.distribution[5] == 80
+
+    def test_persiste_textos_individuais_sem_duplicar(
+        self, database: Database, make_offer_record, clock
+    ) -> None:
+        repo = SqliteRepository(database)
+        base = self._record(make_offer_record, clock)
+        assert base.reviews is not None
+        text = ReviewText(
+            product_id=base.product.id,
+            store_id=base.store.id,
+            source="fixture",
+            source_url=base.offer.source_url,
+            rating=1,
+            title="Atraso",
+            body="Chegou atrasado e o suporte não respondeu.",
+            reviewed_at=clock.now() - timedelta(days=2),
+            collected_at=clock.now(),
+        )
+        record = replace(base, reviews=replace(base.reviews, texts=(text,)))
+
+        repo.save_batch([record], now=clock.now())
+        repo.save_batch([record], now=clock.now())
+
+        rows = repo.reviews_for_product(record.product.id)
+        assert len(rows) == 1
+        assert len(rows[0].review.texts) == 1
+        assert rows[0].review.texts[0].body == text.body
+        assert rows[0].review.texts[0].reviewed_at is not None
+        with database.connect() as connection:
+            total = connection.execute("SELECT COUNT(*) FROM review_text").fetchone()[0]
+        assert total == 1
+
+    def test_limite_de_textos_e_respeitado(
+        self, database: Database, make_offer_record, clock
+    ) -> None:
+        repo = SqliteRepository(database)
+        base = self._record(make_offer_record, clock)
+        assert base.reviews is not None
+        texts = tuple(
+            ReviewText(
+                product_id=base.product.id,
+                store_id=base.store.id,
+                source="fixture",
+                source_url=base.offer.source_url,
+                rating=rating,
+                body=f"Avaliação {rating}",
+                reviewed_at=clock.now() - timedelta(days=rating),
+                collected_at=clock.now(),
+            )
+            for rating in (1, 2, 3)
+        )
+        repo.save_batch(
+            [replace(base, reviews=replace(base.reviews, texts=texts))],
+            now=clock.now(),
+        )
+
+        rows = repo.reviews_for_product(base.product.id, text_limit=2)
+        assert len(rows[0].review.texts) == 2
 
     def test_cupom_e_idempotente_por_loja_e_codigo(
         self, database: Database, make_offer_record, clock

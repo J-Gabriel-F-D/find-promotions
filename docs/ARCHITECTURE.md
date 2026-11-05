@@ -138,6 +138,32 @@ não há teto rígido baseado neles. A limitação aparece em `limitations`. O
 vocabulário obrigatório é probabilístico: *"baixo risco identificado com base
 nos dados disponíveis"*. Proibido: "loja segura", "loja fraudulenta".
 
+### 8.1 Avaliações e reclamações
+
+Textos individuais só entram por **feed JSON documentado** ou `fixture`; não há
+scraping de páginas de avaliação. O agregado continua em `review_summary` e as
+linhas individuais em `review_text` (migração `0005_reviews`), com cascata a
+partir do produto/agregado.
+
+Princípios:
+
+- **autor não é armazenado** (minimização de PII); só nota, título, corpo, data
+  declarada, fonte, URL, coleta e confiança;
+- o corpo é sanitizado (ANSI, controles C0/C1, bidi) e limitado antes de ser
+  persistido ou renderizado; a renderização também faz `escape` de markup;
+- **sentimento deriva da nota** (`4–5` positivo, `3` neutro, `1–2` negativo),
+  sem modelo de linguagem;
+- **reclamações são menções** encontradas no texto, agrupadas por categoria, com
+  `review_id`, termos casados e trecho apenas com `--include-text`;
+- `analysis_confidence` mede cobertura da amostra (`with_text / sample_size` e
+  tamanho), não probabilidade de fraude;
+- sem texto publicado, a saída declara que a análise não pôde ser feita;
+- `rules_version = "reviews-v1"` e `disclaimer` acompanham toda análise.
+
+Análise implementada em `services/reviews.py`, exposta por
+`application/use_cases/reviews.py` e pelo comando `reviews`
+(`--include-text`, `--limit`). Textos ficam fora do JSON por padrão.
+
 ## 9. Ranking
 
 Filtros rígidos → utilidade:
@@ -207,20 +233,28 @@ Opt-in por canal, quiet hours no fuso do usuário, dedupe por
 Salvaguardas: JSON Schema na saída, `temperature=0`, cache por hash, parser
 determinístico como fallback, guard que rejeita números não rastreáveis.
 
+Na Fase 3 a análise de avaliações/reclamações é **100% determinística** e não
+usa IA. A IA continua opcional, desligada por padrão e sem acesso a textos de
+avaliação nesta fase. Qualquer resumo futuro por LLM deve enviar apenas dados
+já sanitizados, manter o fallback determinístico e nunca concluir fraude.
+
 ## 13. Segurança
 
 Entrada validada por Pydantic · URLs apenas `http(s)` com bloqueio de IP
 privado/link-local/metadata e rechecagem pós-DNS (anti-SSRF) · texto raspado
-tratado como não confiável (strip de ANSI/controle antes de renderizar) · SQL
-parametrizado · segredos em variáveis de ambiente ou keyring opcional (env tem
-precedência) · redação em logs · permissões restritas no banco · auditoria de
-mudanças de estado.
+tratado como não confiável (strip de ANSI/controle/bidi antes de persistir e de
+renderizar, mais `escape` de markup) · SQL parametrizado · segredos em
+variáveis de ambiente ou keyring opcional (env tem precedência) · redação em
+logs · permissões restritas no banco · auditoria de mudanças de estado ·
+`interactive` sem shell escape/`eval`.
 
 ## 14. LGPD
 
 PII mínima (e-mail/telefone só com opt-in) · retenção configurável ·
 `privacy export` / `privacy forget` / `privacy retention` · consentimento por
-canal na configuração · nenhum texto com PII enviado a LLM.
+canal na configuração · nenhum texto com PII enviado a LLM · textos de avaliação
+são conteúdo público da fonte e não entram no `forget`; o autor não é
+armazenado.
 
 ## 15. Observabilidade
 
@@ -274,7 +308,8 @@ Desvios conscientes em relação ao desenho original:
 4. **IA permanece desligada por padrão e sem uso na Fase 1.** O parser de intenção
    é 100% determinístico; o caminho de IA fica para a Fase 3 (resumo de
    avaliações/reclamações), com schema + guard numérico já previstos.
-5. **`monitor` e `interactive` adiados** para as Fases 3–4, conforme roadmap.
+5. **`interactive` adiado para a Fase 3 e `monitor` para a Fase 4**, conforme
+   roadmap. O `interactive` foi entregue na Fase 3.
 
 ### Fase 2 — concluída
 
@@ -302,19 +337,22 @@ Desvios conscientes da Fase 2:
 4. **Fixture usa subdomínios `*.demo.local`.** `Store.id` deriva do domínio;
    compartilhar `demo.local` faria todas as lojas demo colapsarem em uma só.
 
-### Fase 3 — parcial (confiança)
+### Fase 3 — concluída
 
 | Área | Implementado |
 |---|---|
 | Confiança | `TrustAssessment` com `score` 0–100, `analysis_confidence` 0–1, `risk_band`, dimensões, sinais, limitações e `rules_version` |
 | Sinais | procedência da fonte/loja, domínio/HTTPS, vendedor, avaliações agregadas, desconto, histórico e frescor |
 | Ranking | `picks.safest` quando há score ≥ 50 e cobertura ≥ 0,30; caso contrário `null` |
-| Explicabilidade | evidência textual por sinal, `disclaimer` obrigatório e JSON aditivo dentro de cada oferta |
-| Testes | `tests/unit/test_trust.py`, e2e de guardrails e cenários de separação score/confiança |
+| Avaliações | `review_text` (migração `0005_reviews`), parsing de `reviews.items` no feed, textos demo marcados, sanitização e `--include-text`/`--limit` |
+| Reclamações | análise determinística em `services/reviews.py`: sentimento pela nota, menções por categoria, evidências rastreáveis, `analysis_confidence` e `disclaimer` |
+| Interativo | `interactive` com `search`/`reviews`/`history`/`promotions`/`help`/`sair`, sem shell escape |
+| Explicabilidade | evidência textual por sinal, `disclaimer` obrigatório e JSON aditivo dentro de cada oferta/análise |
+| Testes | `test_trust.py`, `test_reviews.py`, `test_review_text_safety.py`, `test_cli_interactive.py`, e2e de guardrails e cenários de injeção/ANSI |
 
-Pendente na Fase 3: análise de sentimento/reclamações, linhas individuais de
-avaliação e `interactive`. Meio de pagamento e idade do domínio não são
-coletados; não há teto rígido baseado neles.
+Limitações mantidas: meio de pagamento e idade do domínio não são coletados;
+não há teto rígido baseado neles. Avaliações individuais dependem de feed/fixture
+e a análise não prova fraude nem representa toda a base de clientes.
 
 ### Dados de demonstração
 

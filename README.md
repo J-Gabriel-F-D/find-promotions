@@ -14,7 +14,7 @@ Roda no terminal, sem servidor, sem Docker, sem dashboard web.
 | **0 — Fundação** | Estrutura, configuração, logging, banco + migrações, container, CLI base, `--json`, exit codes | ✅ concluída |
 | **1 — MVP** | `search`, fontes (Mercado Livre + feed + fixture), normalização/dedupe, histórico, `alerts`, e-mail | ✅ concluída |
 | **2 — Ofertas** | cupons, promoções, ranking por promoção, avaliações | ✅ concluída |
-| 3 — Confiança | análise probabilística de confiança/antifraude, falso desconto, `picks.safest`; reclamações e `interactive` pendentes | 🟡 parcial |
+| **3 — Confiança** | análise probabilística de confiança/antifraude, falso desconto, `picks.safest`, análise determinística de avaliações/reclamações, `interactive` | ✅ concluída |
 | 4 — Automação | `monitor` contínuo, WhatsApp/SMS, alertas inteligentes | ⏳ |
 
 Decisões aprovadas: **Python 3.12+** · **Mercado Livre (API oficial) + fixture + adapter genérico** · **IA opcional com fallback determinístico**.
@@ -49,6 +49,12 @@ Limite explícito: cupom continua sendo **declaração da fonte**, não validaç
 - Dimensões observáveis: procedência da fonte/loja, reputação do vendedor, avaliações agregadas,
   desconto corroborado pelo histórico, histórico de preços e frescor da coleta.
 - **`picks.safest`** passa a existir quando há evidência mínima; sem cobertura suficiente, continua `null`.
+- **Avaliações individuais** entram apenas quando a fonte as publica em feed JSON/fixture. O autor
+  nunca é armazenado; o texto é sanitizado (ANSI/controles/bidi) e limitado.
+- **Análise determinística** dos textos: sentimento derivado da nota declarada e reclamações como
+  **menções textuais** rastreáveis (`review_id`, termos e trecho opcional). Não há IA no caminho padrão.
+- **`interactive`** abre um REPL simples (`search`, `reviews`, `history`, `promotions`, `help`, `sair`)
+  sem shell escape, `eval` ou execução de comandos do sistema.
 - Limitações explícitas: meio de pagamento e idade do domínio **não** são coletados nesta fase.
   A análise nunca afirma fraude nem segurança absoluta.
 
@@ -62,9 +68,15 @@ Limite explícito: cupom continua sendo **declaração da fonte**, não validaç
   promoção `regular` não recebe o selo "relâmpago".
 - **Nenhum cupom é validado na loja** nesta fase. `validation` é sempre `unverified` e
   `last_verified_at` fica `null`; o Mercado Livre não expõe API pública de cupons.
-- Avaliações são apenas o **agregado da fonte**. Análise de sentimento/reclamações ainda não existe.
+- Avaliações agregadas são **declaração da fonte**. Textos individuais só existem quando o feed os
+  publica; sem texto, a análise informa que não há amostra em vez de estimar sentimento.
+- Sentimento é **derivado da nota**; reclamações são **menções** no texto e não provam fraude nem
+  representam toda a base de clientes. `analysis_confidence` mede cobertura da amostra.
+- Nenhum texto de avaliação é gerado, resumido ou reescrito por IA nesta fase. A IA continua opcional
+  e desligada por padrão.
 - Não faz scraping de HTML de lojas. Novas lojas entram por **feed JSON documentado** ou API oficial.
-- A fonte `fixture` é **demonstração offline**: preços, cupons e promoções fictícios, marcados em toda saída.
+- A fonte `fixture` é **demonstração offline**: preços, cupons, promoções e textos fictícios,
+  marcados em toda saída (textos com `[demonstração]`).
 
 ---
 
@@ -187,9 +199,11 @@ A exportação contém alertas, eventos e metadados de notificação; contatos d
 perfil aparecem mascarados por padrão (`--include-contacts` revela os e-mails
 reais). `forget` não altera o `config.toml` — remova
 e-mails/SMTP manualmente se quiser eliminar também esses dados. O catálogo
-público de produtos e preços não é apagado. A retenção remove eventos e
-notificações antigos, mas preserva a chave de deduplicação enquanto o alerta
-existir, para não reenviar a mesma oferta; `forget` apaga também essas chaves.
+público de produtos, preços e textos de avaliação publicados pela fonte não é
+apagado — são declarações da fonte, não dados do usuário. A retenção remove
+eventos e notificações antigos, mas preserva a chave de deduplicação enquanto o
+alerta existir, para não reenviar a mesma oferta; `forget` apaga também essas
+chaves.
 
 ### Cupons
 
@@ -222,10 +236,32 @@ Cada linha mostra tipo (`relâmpago`, `regular`, `liquidação`), janela e situa
 dealhunter reviews "redmi note 14"          # por termo (usa o produto mais recente)
 dealhunter reviews prd_1a2b3c4d5e6f7890     # por ID do produto
 dealhunter reviews off_1a2b3c4d5e6f7890     # por ID da oferta
+dealhunter reviews "redmi" --include-text   # opt-in: mostra os textos da fonte
+dealhunter reviews "redmi" --limit 5        # analisa/exibe no máximo 5 textos por loja
 ```
 
-Mostra média, quantidade e distribuição por estrelas publicadas pela fonte. Sem IA e sem
-texto inventado; `--json` inclui `negative_share` e a data da coleta.
+Mostra média, quantidade e distribuição por estrelas publicadas pela fonte, além de uma
+**análise determinística** dos textos individuais:
+
+- o sentimento é derivado da nota declarada (`positive`, `neutral`, `negative`);
+- as reclamações são **menções textuais** agrupadas por categoria, com `review_id`, termos
+  encontrados e trecho opcional;
+- `analysis_confidence` (0–1) reflete cobertura da amostra, não probabilidade de fraude;
+- sem textos publicados, a saída diz que a análise não pôde ser feita.
+
+Textos só são exibidos com `--include-text` (também no `--json`). O autor não é armazenado e os
+textos passam por sanitização de ANSI/controles e escape de markup antes de aparecer no terminal.
+
+### Modo interativo
+
+```bash
+dealhunter interactive
+dealhunter interactive --source fixture
+```
+
+Comandos: `search`, `reviews`, `history`, `promotions`, `help` e `sair`. É um REPL simples —
+não há escape para shell, `eval` ou execução de programas do sistema. `--json` e `--quiet`
+são recusados nesse modo; use os comandos individuais para automação.
 
 ### Fontes
 
@@ -354,8 +390,10 @@ substituem `final_price_cents`, que é o preço confirmado sem cupom.
 `schema_version` passou de `1.0` para `1.1` na Fase 2 de forma **aditiva**: campos novos
 (`coupons`, `best_coupon`, `promotion`, `reviews`, `score_breakdown`) e `picks.flash`
 preenchido quando existe promoção `flash` com janela aberta. A Fase 3 adicionou `trust` por
-oferta e passou a preencher `picks.safest`; ambos são aditivos. Consumidores que ignoram campos
-desconhecidos continuam funcionando.
+oferta e passou a preencher `picks.safest`; em `reviews`, adicionou `text_count`, `analysis`
+(sentimento, reclamações, evidências, `rules_version` e `disclaimer`) e, com `--include-text`,
+`texts[]`. Todos os campos são aditivos: consumidores que ignoram campos desconhecidos continuam
+funcionando.
 
 O histograma de preços **não** é inflado por rechecagens: a mesma oferta com o mesmo preço
 gera no máximo uma amostra por hora (mudança de preço é sempre registrada).

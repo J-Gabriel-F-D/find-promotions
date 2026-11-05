@@ -15,7 +15,8 @@ def test_migrate_cria_schema(tmp_path: Path) -> None:
     assert "0001_init" in result.applied
     assert "0002_mvp" in result.applied
     assert "0004_privacidade" in result.applied
-    assert database.schema_version() == "0004_privacidade"
+    assert "0005_reviews" in result.applied
+    assert database.schema_version() == "0005_reviews"
     assert database.integrity_check() is True
 
 

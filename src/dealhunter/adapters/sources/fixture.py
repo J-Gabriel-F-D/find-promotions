@@ -19,6 +19,7 @@ from dealhunter.domain.models import (
     CollectedCoupon,
     CollectedOffer,
     CollectedPromotion,
+    CollectedReview,
     CollectedReviews,
     CouponKind,
     PromotionKind,
@@ -59,10 +60,21 @@ class DemoPromotion:
 
 
 @dataclass(frozen=True, slots=True)
+class DemoReview:
+    """Texto fictício de demonstração; nunca é apresentado como real."""
+
+    rating: int
+    body: str
+    title: str = ""
+    days_ago: int = 0
+
+
+@dataclass(frozen=True, slots=True)
 class DemoReviews:
     rating: float
     count: int
     distribution: dict[int, int]
+    items: tuple[DemoReview, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,7 +121,43 @@ CATALOG: tuple[DemoOffer, ...] = (
             ),
         ),
         promotion=DemoPromotion("flash", "Relâmpago Aurora", ends_in_hours=3),
-        reviews=DemoReviews(4.7, 213, {5: 160, 4: 38, 3: 9, 2: 4, 1: 2}),
+        reviews=DemoReviews(
+            4.7,
+            213,
+            {5: 160, 4: 38, 3: 9, 2: 4, 1: 2},
+            items=(
+                DemoReview(
+                    5,
+                    "[demonstração] Chegou em dois dias, bem embalado e funcionando.",
+                    "Entrega rápida",
+                    days_ago=5,
+                ),
+                DemoReview(
+                    5,
+                    "[demonstração] Câmera muito boa para o preço.",
+                    "Valeu a pena",
+                    days_ago=12,
+                ),
+                DemoReview(
+                    4,
+                    "[demonstração] O produto é bom, mas a embalagem chegou amassada.",
+                    "Embalagem",
+                    days_ago=20,
+                ),
+                DemoReview(
+                    2,
+                    "[demonstração] Demorou mais de duas semanas e o atendimento não respondeu.",
+                    "Atraso",
+                    days_ago=30,
+                ),
+                DemoReview(
+                    3,
+                    "[demonstração] Aparelho ok; a bateria dura o esperado.",
+                    "Neutro",
+                    days_ago=40,
+                ),
+            ),
+        ),
     ),
     DemoOffer(
         title="Xiaomi Redmi Note 14 5G 256 GB 8GB RAM",
@@ -125,7 +173,32 @@ CATALOG: tuple[DemoOffer, ...] = (
         history=((60, 197_900), (30, 191_900), (10, 184_900)),
         coupons=(DemoCoupon("MEGA50", "fixed", 5_000, min_purchase_cents=150_000),),
         promotion=DemoPromotion("regular", "Semana MegaTech", ends_in_hours=24 * 5),
-        reviews=DemoReviews(4.4, 87, {5: 62, 4: 15, 3: 6, 2: 2, 1: 2}),
+        reviews=DemoReviews(
+            4.4,
+            87,
+            {5: 62, 4: 15, 3: 6, 2: 2, 1: 2},
+            items=(
+                DemoReview(
+                    5,
+                    "[demonstração] Tudo certo, entrega dentro do prazo.",
+                    "Sem problemas",
+                    days_ago=8,
+                ),
+                DemoReview(
+                    2,
+                    "[demonstração] O produto apresentou defeito e o suporte não respondeu.",
+                    "Defeito",
+                    days_ago=18,
+                ),
+                DemoReview(
+                    1,
+                    "[demonstração] Cobraram frete diferente do combinado e demoraram "
+                    "para estornar.",
+                    "Cobrança",
+                    days_ago=27,
+                ),
+            ),
+        ),
     ),
     DemoOffer(
         title="Smartphone Xiaomi Redmi Note 14 256GB",
@@ -142,7 +215,37 @@ CATALOG: tuple[DemoOffer, ...] = (
         # Mínimo de R$ 2.000 nunca é atingido: demonstra cupom não aplicável.
         coupons=(DemoCoupon("IMP5", "percent", 5, min_purchase_cents=200_000),),
         promotion=DemoPromotion("regular", "Oferta ImportaFacil", ends_in_hours=30),
-        reviews=DemoReviews(3.8, 41, {5: 24, 4: 8, 3: 5, 2: 2, 1: 2}),
+        reviews=DemoReviews(
+            3.8,
+            41,
+            {5: 24, 4: 8, 3: 5, 2: 2, 1: 2},
+            items=(
+                DemoReview(
+                    5,
+                    "[demonstração] Chegou rápido e funciona.",
+                    "Ok",
+                    days_ago=4,
+                ),
+                DemoReview(
+                    2,
+                    "[demonstração] O produto veio diferente da descrição; pedi reembolso.",
+                    "Produto diferente",
+                    days_ago=15,
+                ),
+                DemoReview(
+                    1,
+                    "[demonstração] Não chegou e o atendimento não respondeu.",
+                    "Não chegou",
+                    days_ago=25,
+                ),
+                DemoReview(
+                    3,
+                    "[demonstração] Demorou, mas chegou.",
+                    "Demora",
+                    days_ago=35,
+                ),
+            ),
+        ),
     ),
     DemoOffer(
         title="Xiaomi Redmi Note 13 128GB 8GB RAM",
@@ -366,6 +469,16 @@ class FixtureAdapter:
                             rating=item.reviews.rating,
                             count=item.reviews.count,
                             distribution=dict(item.reviews.distribution),
+                            items=tuple(
+                                CollectedReview(
+                                    rating=review.rating,
+                                    body=review.body,
+                                    title=review.title,
+                                    reviewed_at=now - timedelta(days=review.days_ago),
+                                    confidence=0.4,
+                                )
+                                for review in item.reviews.items
+                            ),
                             confidence=0.4,
                         )
                         if item.reviews is not None

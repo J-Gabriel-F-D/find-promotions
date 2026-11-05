@@ -80,12 +80,23 @@ Os marcadores são aplicados automaticamente pelo diretório em
 - Confiança cobre separação entre `score` e `analysis_confidence`, prior de fonte,
   desconto suspeito, avaliações com amostra pequena, domínio divergente, dados
   antigos, ausência de `picks.safest` sem evidência e vocabulário sem acusação.
+- Avaliações individuais cobrem parsing de `reviews.items`, descarte de autor,
+  sanitização de ANSI/controles/bidi, limites de tamanho, idempotência e limite
+  de leitura por loja.
+- Análise de reclamações cobre sentimento derivado da nota, categorias com
+  evidência rastreável, texto positivo que não vira reclamação, snippet apenas
+  com opt-in, confiança por cobertura e ausência de acusação de fraude.
+- Segurança dos textos cobre escape de markup/HTML, remoção de quebra de
+  terminal e ausência do campo de autor.
+- `interactive` cobre `help`, EOF, `search`, `reviews`, `history`, `promotions`,
+  comandos desconhecidos (incluindo tentativa de shell) e rejeição de
+  `--json`/`--quiet`.
 
 ## Cobertura atual
 
-- 467 testes aprovados, 3 ignorados (permissões POSIX e cenários dependentes de
-  plataforma), 470 coletados, em Windows/Python 3.14.5.
-- Cobertura combinada: **87,34%** (limite mínimo configurado: 85%).
+- 499 testes aprovados, 3 ignorados (permissões POSIX e cenários dependentes de
+  plataforma), 502 coletados, em Windows/Python 3.14.5.
+- Cobertura combinada: **89,06%** (limite mínimo configurado: 85%).
 - `ruff format --check`, `ruff check` e `mypy src` sem erros.
 - `bandit -r src`: sem achados (o jitter de retry é marcado como `nosec B311`,
   pois não é usado para criptografia).
@@ -98,11 +109,13 @@ Os marcadores são aplicados automaticamente pelo diretório em
 A suíte cobre apenas comportamento implementado. Ainda **não** existem, e por
 isso não são testados como se existissem:
 
-- análise de reclamações individuais e sentimento de avaliações;
 - meio de pagamento e idade do domínio no score de confiança (dados não coletados);
 - comando `monitor` contínuo;
 - SMS e WhatsApp (o WhatsApp só pode usar API oficial);
-- linhas individuais de avaliações (hoje há apenas o agregado publicado).
+- coleta de avaliações por scraping ou por API que não as exponha: textos
+  individuais só existem quando o feed/fixture os declarar;
+- resumo de avaliações por IA: a análise atual é determinística e a IA continua
+  desligada por padrão.
 
 Esses pontos permanecem registrados como risco ou funcionalidade pendente, não
 como teste aprovado artificialmente.

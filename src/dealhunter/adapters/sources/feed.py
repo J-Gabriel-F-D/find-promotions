@@ -25,6 +25,7 @@ from dealhunter.domain.models import (
     CollectedCoupon,
     CollectedOffer,
     CollectedPromotion,
+    CollectedReview,
     CollectedReviews,
     Condition,
     CouponKind,
@@ -44,10 +45,16 @@ _MAX_CODE = 100
 _MAX_LABEL = 200
 _MAX_TEXT = 200
 _MAX_SPECS = 50
+_MAX_REVIEWS = 200
+_MAX_REVIEW_TITLE = 200
+_MAX_REVIEW_BODY = 4_000
 _DOMAIN = re.compile(r"^[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?$")
 _CURRENCY = re.compile(r"^[A-Z]{3}$")
 # Remove controles C0/C1, DEL, escapes ANSI e controles de direção bidi.
-_CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]")
+_CONTROL = re.compile(
+    r"\x1b\[[0-?]*[ -/]*[@-~]"
+    r"|[\x00-\x08\x0b-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]"
+)
 
 
 def _text(value: Any, *, limit: int) -> str | None:
@@ -334,5 +341,35 @@ class FeedAdapter:
             rating=rating,
             count=count,
             distribution=distribution,
+            items=self._parse_review_items(raw.get("items")),
             confidence=0.6,
         )
+
+    def _parse_review_items(self, raw: Any) -> tuple[CollectedReview, ...]:
+        """Le apenas linhas declaradas; autor e ignorado de proposito."""
+        if not isinstance(raw, list):
+            return ()
+        items: list[CollectedReview] = []
+        for item in raw[:_MAX_REVIEWS]:
+            if not isinstance(item, dict):
+                continue
+            rating = _int(item.get("rating"))
+            if rating is None or not 1 <= rating <= 5:
+                continue
+            body = _text(item.get("text") or item.get("body"), limit=_MAX_REVIEW_BODY)
+            title = _text(item.get("title"), limit=_MAX_REVIEW_TITLE)
+            if not body or title is None:
+                continue
+            reviewed_at = _datetime(
+                item.get("reviewed_at") or item.get("date") or item.get("created_at")
+            )
+            items.append(
+                CollectedReview(
+                    rating=rating,
+                    body=body,
+                    title=title,
+                    reviewed_at=reviewed_at,
+                    confidence=0.6,
+                )
+            )
+        return tuple(items)

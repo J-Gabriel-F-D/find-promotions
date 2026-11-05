@@ -188,5 +188,8 @@ class TestTrustGuardrails:
         assert result.exit_code == 0, result.output
         payload = json.loads(result.output)
         assert payload.get("sources") is not None
-        assert "Não é análise de sentimento nem de reclamações" in payload["warnings"][0]
+        disclaimer = next(
+            warning for warning in payload["warnings"] if "não confirma fraude" in warning
+        )
+        assert "menções textuais" in disclaimer
         assert "garantia" not in json.dumps(payload).lower()

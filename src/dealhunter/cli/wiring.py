@@ -168,7 +168,13 @@ def run_promotions(
     )
 
 
-def run_reviews(rt: RuntimeContext, term: str) -> tuple[ReviewReport | None, list[str]]:
+def run_reviews(
+    rt: RuntimeContext,
+    term: str,
+    *,
+    text_limit: int = 20,
+    include_text: bool = False,
+) -> tuple[ReviewReport | None, list[str]]:
     ensure_database(rt)
     service = ReviewService(repository=SqliteRepository(rt.database))
-    return service.build(term)
+    return service.build(term, text_limit=text_limit, include_text=include_text)

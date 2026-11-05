@@ -288,3 +288,79 @@ class TestFixture:
             offer.store_domain and offer.store_domain.endswith(".demo.local") for offer in offers
         )
         assert all(offer.confidence <= 0.4 for offer in offers)
+
+
+def test_feed_parseia_avaliacoes_individuais() -> None:
+    payload = {
+        "offers": [
+            {
+                "title": "Xiaomi Redmi Note 14 256GB",
+                "url": "https://loja.example/produto/1",
+                "price": "1649.90",
+                "store": "Loja Exemplo",
+                "store_domain": "loja.example",
+                "reviews": {
+                    "rating": 4.0,
+                    "count": 3,
+                    "items": [
+                        {
+                            "rating": 5,
+                            "title": "Ótimo",
+                            "text": "Chegou rápido e funciona.",
+                            "reviewed_at": "2026-03-01",
+                            "author": "Pessoa Que Nao Deve Ser Armazenada",
+                        },
+                        {"rating": 9, "text": "nota inválida"},
+                        {"rating": 2, "text": "   "},
+                    ],
+                },
+            }
+        ]
+    }
+    offers = _run_feed(payload)
+    reviews = offers[0].reviews
+    assert reviews is not None
+    assert len(reviews.items) == 1
+    item = reviews.items[0]
+    assert item.rating == 5
+    assert item.title == "Ótimo"
+    assert item.body == "Chegou rápido e funciona."
+    assert item.reviewed_at is not None
+    assert not hasattr(item, "author")
+
+
+def test_feed_sanea_controles_e_limita_texto_de_avaliacao() -> None:
+    payload = {
+        "offers": [
+            {
+                "title": "Produto",
+                "url": "https://loja.example/p",
+                "price": 100,
+                "reviews": {
+                    "rating": 3,
+                    "count": 2,
+                    "items": [
+                        {
+                            "rating": 1,
+                            "text": "\x1b[31mQuebrou\u202e\n na primeira semana\x00",
+                        },
+                        {"rating": 1, "text": "x" * 4_001},
+                    ],
+                },
+            }
+        ]
+    }
+    offers = _run_feed(payload)
+    reviews = offers[0].reviews
+    assert reviews is not None
+    assert len(reviews.items) == 1
+    assert reviews.items[0].body == "Quebrou na primeira semana"
+    assert "\x1b" not in reviews.items[0].body
+    assert "\u202e" not in reviews.items[0].body
+
+
+def test_fixture_oferece_textos_ficticios_marcados() -> None:
+    offers = asyncio.run(FixtureAdapter().search(QuerySpec(product="redmi")))
+    texts = [item for offer in offers if offer.reviews is not None for item in offer.reviews.items]
+    assert texts
+    assert all("[demonstração]" in item.body for item in texts)
