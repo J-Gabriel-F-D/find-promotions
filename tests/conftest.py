@@ -103,6 +103,8 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
         "e2e": "e2e",
         "functional": "functional",
         "regression": "regression",
+        "live": "live",
+        "soak": "soak",
     }
     for item in items:
         path_parts = set(item.path.parts)

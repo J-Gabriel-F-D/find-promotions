@@ -12,6 +12,7 @@ da variável de ambiente; o valor pode vir dela ou do keyring opcional.
 from __future__ import annotations
 
 import os
+import re
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -28,6 +29,15 @@ ColorMode = Literal["auto", "always", "never"]
 
 PROJECT_CONFIG_NAME = ".dealhunter.toml"
 ENV_PREFIX = "DEALHUNTER_"
+_CONTACT_REFERENCE = re.compile(r"^(?:env|keyring):[A-Za-z_][A-Za-z0-9_]{0,127}$")
+_CONTACT_FIELDS = (
+    "email_from",
+    "email_to",
+    "smtp_user",
+    "whatsapp_phone",
+    "sms_to",
+    "sms_from",
+)
 
 
 class ConfigError(RuntimeError):
@@ -106,6 +116,22 @@ class NotificationSettings(BaseModel):
     sms_from: str | None = None
     sms_token_env: str = "DEALHUNTER_SMS_TOKEN"
     sms_timeout_seconds: float = Field(default=20.0, gt=0, le=120)
+
+    @field_validator(*_CONTACT_FIELDS)
+    @classmethod
+    def _validate_contact(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = value.strip()
+        if not cleaned:
+            return None
+        if cleaned.startswith(("env:", "keyring:")):
+            if not _CONTACT_REFERENCE.fullmatch(cleaned):
+                raise ValueError("referência de contato inválida (use env:NOME ou keyring:NOME)")
+            return cleaned
+        if any(ord(char) < 32 for char in cleaned):
+            raise ValueError("contato contém caracteres de controle")
+        return cleaned
 
 
 class SourcesSettings(BaseModel):
@@ -264,10 +290,20 @@ def _apply_env_overrides(config: AppConfig, environ: dict[str, str]) -> AppConfi
     return AppConfig.model_validate(data)
 
 
+def _mask_reference(value: str | None) -> str | None:
+    """Não expõe nem o nome da variável usada como referência de contato."""
+    if value and value.startswith(("env:", "keyring:")):
+        return f"{value.split(':', 1)[0]}:***"
+    return value
+
+
 def _mask_account(value: str | None) -> str | None:
     """Mascara a parte local de um e-mail/usuário, preservando o domínio."""
     if not value:
         return value
+    reference = _mask_reference(value)
+    if reference != value:
+        return reference
     local, separator, domain = value.partition("@")
     if not local:
         return "***"
@@ -279,6 +315,9 @@ def _mask_phone(value: str | None) -> str | None:
     """Mantém apenas o DDI e os dois últimos dígitos do telefone."""
     if not value:
         return value
+    reference = _mask_reference(value)
+    if reference != value:
+        return reference
     digits = "".join(char for char in value if char.isdigit())
     if len(digits) <= 2:
         return "***"

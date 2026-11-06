@@ -111,14 +111,26 @@ class TestCommandAndPathInjection:
     def test_codigo_nao_chama_comandos_do_sistema(self) -> None:
         root = Path(__file__).resolve().parents[2] / "src" / "dealhunter"
         forbidden = re.compile(
-            r"\b(subprocess\.|os\.system\s*\(|os\.popen\s*\(|shell\s*=\s*True|"
+            r"\b(os\.system\s*\(|os\.popen\s*\(|shell\s*=\s*True|"
             r"pickle\.loads\s*\(|yaml\.load\s*\(|eval\s*\(|exec\s*\()"
         )
-        offenders = [
-            str(path.relative_to(root))
-            for path in root.rglob("*.py")
-            if forbidden.search(path.read_text(encoding="utf-8"))
-        ]
+        # subprocess só é permitido em dois pontos auditados: ACL do Windows com
+        # lista fixa de argumentos e o spawn destacado do monitor (que reexecuta
+        # a própria CLI, sem shell). Nenhum deles interpola entrada do usuário.
+        allowed_subprocess = {
+            "runtime/permissions.py",
+            "cli/commands/monitor.py",
+        }
+        offenders: list[str] = []
+        for path in root.rglob("*.py"):
+            relative = str(path.relative_to(root)).replace("\\", "/")
+            text = path.read_text(encoding="utf-8")
+            if (
+                forbidden.search(text)
+                or "subprocess." in text
+                and relative not in allowed_subprocess
+            ):
+                offenders.append(relative)
         assert offenders == []
 
     def test_nome_de_produto_com_traversal_nao_cria_arquivos(self, tmp_path: Path) -> None:

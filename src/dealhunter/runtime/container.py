@@ -44,6 +44,7 @@ class RuntimeContext:
     error_console: Console
     database: Database
     glyphs: Glyphs
+    config_path: Path | None = None
 
     @property
     def unicode_enabled(self) -> bool:
@@ -149,6 +150,7 @@ def build_runtime(
         error_console=error_console,
         database=Database(paths.database_file),
         glyphs=glyphs_for(unicode_enabled),
+        config_path=config_path,
     )
 
 

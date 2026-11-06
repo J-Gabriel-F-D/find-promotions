@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -16,6 +17,7 @@ from dealhunter.runtime.config import (
     mask_config_pii,
 )
 from dealhunter.runtime.container import build_runtime
+from dealhunter.runtime.permissions import current_principal, restrict_path
 
 runner = CliRunner()
 
@@ -221,3 +223,44 @@ class TestFilePermissions:
         )
         runtime.database.migrate()
         assert runtime.database.path.stat().st_mode & 0o777 == 0o600
+
+
+class TestWindowsAcl:
+    @pytest.mark.skipif(os.name != "nt", reason="ACL via icacls é específica do Windows")
+    def test_acl_remove_heranca_e_limita_ao_usuario(self, tmp_path: Path) -> None:
+        directory = tmp_path / "private"
+        directory.mkdir()
+
+        assert restrict_path(directory, directory=True) is True
+
+        result = subprocess.run(
+            ["icacls", str(directory)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode == 0, result.stderr
+        output = result.stdout.lower()
+        assert current_principal().lower() in output
+        assert "(i)" not in output
+        assert "todos" not in output and "everyone" not in output
+
+    @pytest.mark.skipif(os.name != "nt", reason="ACL via icacls é específica do Windows")
+    def test_banco_criado_recebe_acl_restritiva(self, tmp_path: Path) -> None:
+        runtime = build_runtime(
+            flags=None,
+            environ={"DEALHUNTER_HOME": str(tmp_path / "home")},
+        )
+        runtime.database.migrate()
+
+        result = subprocess.run(
+            ["icacls", str(runtime.database.path)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode == 0, result.stderr
+        output = result.stdout.lower()
+        assert current_principal().lower() in output
+        assert "(i)" not in output
+        assert "todos" not in output and "everyone" not in output

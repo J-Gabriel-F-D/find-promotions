@@ -11,11 +11,12 @@ com um "perfil" isolado, ex.: ``DEALHUNTER_HOME=./.dev``).
 from __future__ import annotations
 
 import os
-from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 
 from platformdirs import user_cache_path, user_config_path, user_data_path, user_log_path
+
+from dealhunter.runtime.permissions import restrict_path
 
 APP_NAME = "dealhunter"
 ENV_HOME = "DEALHUNTER_HOME"
@@ -46,14 +47,17 @@ class AppPaths:
     def lock_file(self) -> Path:
         return self.data_dir / "monitor.lock"
 
+    @property
+    def pid_file(self) -> Path:
+        return self.data_dir / "monitor.pid"
+
     def ensure_directories(self) -> None:
         for directory in (self.config_dir, self.data_dir, self.cache_dir, self.log_dir):
             directory.mkdir(parents=True, exist_ok=True)
-            if os.name != "nt":
-                # Dados locais (histórico, alertas, configuração) não devem ser
-                # legíveis por outros usuários da máquina.
-                with suppress(OSError):
-                    directory.chmod(0o700)
+            # Dados locais (histórico, alertas, configuração) não devem ser
+            # legíveis por outros usuários da máquina. No Windows isso é uma
+            # ACL via icacls, não chmod.
+            restrict_path(directory, directory=True)
 
     def as_dict(self) -> dict[str, str]:
         return {
@@ -63,6 +67,7 @@ class AppPaths:
             "database": str(self.database_file),
             "cache_dir": str(self.cache_dir),
             "log_file": str(self.log_file),
+            "pid_file": str(self.pid_file),
         }
 
 

@@ -20,6 +20,11 @@ from dealhunter.cli.wiring import ensure_database, run_alerts_check
 from dealhunter.runtime.container import RuntimeContext
 
 app = typer.Typer(help="Cria e gerencia alertas de preço.", no_args_is_help=True)
+rule_app = typer.Typer(
+    help="Edita os filtros inteligentes de um alerta existente.",
+    no_args_is_help=True,
+)
+app.add_typer(rule_app, name="rule")
 
 
 def _rule_text(
@@ -320,3 +325,143 @@ def check(
         for channel, ok, error in outcome.channels_sent:
             mark = "[green]ok[/green]" if ok else f"[red]falhou ({escape(error or '')})[/red]"
             rt.console.print(f"  {escape(channel)}: {mark}")
+
+
+def _rule_payload(rule: AlertRule) -> dict[str, object]:
+    return {
+        "min_trust": rule.min_trust,
+        "max_risk": rule.max_risk,
+        "require_real_discount": rule.require_real_discount,
+        "min_analysis_confidence": rule.min_analysis_confidence,
+        "description": rule.describe(),
+    }
+
+
+@rule_app.command("show")
+def show_rule(ctx: typer.Context, alert_id: Annotated[int, typer.Argument()]) -> None:
+    """Mostra os filtros inteligentes atuais do alerta."""
+    rt: RuntimeContext = ctx.obj
+    ensure_database(rt)
+    alert = SqliteRepository(rt.database).get_alert(alert_id)
+    if alert is None:
+        if rt.json_output:
+            emit_json(
+                envelope(
+                    "alerts.rule.show",
+                    generated_at=rt.clock.now().isoformat(),
+                    alert_id=alert_id,
+                    found=False,
+                )
+            )
+        else:
+            rt.error_console.print(f"[yellow]Alerta #{alert_id} não encontrado.[/yellow]")
+        raise typer.Exit(code=int(ExitCode.NO_RESULTS))
+
+    if rt.json_output:
+        emit_json(
+            envelope(
+                "alerts.rule.show",
+                generated_at=rt.clock.now().isoformat(),
+                alert_id=alert_id,
+                found=True,
+                rule=_rule_payload(alert.rule),
+            )
+        )
+        return
+
+    if alert.rule.is_empty:
+        rt.console.print(f"Alerta #{alert_id}: [dim]sem filtros inteligentes.[/dim]")
+        return
+    rt.console.print(f"Alerta #{alert_id}: {', '.join(alert.rule.describe())}")
+
+
+@rule_app.command("set")
+def set_rule(
+    ctx: typer.Context,
+    alert_id: Annotated[int, typer.Argument()],
+    min_trust: Annotated[
+        float | None,
+        typer.Option("--min-trust", min=0, max=100, help="Confiança mínima (0-100)."),
+    ] = None,
+    max_risk: Annotated[
+        str | None,
+        typer.Option("--max-risk", help="Risco máximo aceito: low, moderate ou elevated."),
+    ] = None,
+    require_real_discount: Annotated[
+        bool,
+        typer.Option(
+            "--require-real-discount",
+            help="Exige desconto corroborado pelo histórico (likely_real).",
+        ),
+    ] = False,
+    min_analysis_confidence: Annotated[
+        float | None,
+        typer.Option(
+            "--min-analysis-confidence",
+            min=0,
+            max=1,
+            help="Cobertura mínima da análise de confiança (0-1).",
+        ),
+    ] = None,
+) -> None:
+    """Define os filtros inteligentes do alerta (substitui os anteriores)."""
+    rt: RuntimeContext = ctx.obj
+    ensure_database(rt)
+    try:
+        rule = AlertRule(
+            min_trust=min_trust,
+            max_risk=max_risk,  # type: ignore[arg-type]
+            require_real_discount=require_real_discount,
+            min_analysis_confidence=min_analysis_confidence,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    if rule.is_empty:
+        raise typer.BadParameter("informe ao menos um filtro ou use 'alerts rule clear'")
+
+    changed = SqliteRepository(rt.database).set_alert_rule(alert_id, rule, now=rt.clock.now())
+    if rt.json_output:
+        emit_json(
+            envelope(
+                "alerts.rule.set",
+                generated_at=rt.clock.now().isoformat(),
+                alert_id=alert_id,
+                changed=changed,
+                rule=_rule_payload(rule),
+            )
+        )
+    elif not changed:
+        rt.error_console.print(f"[yellow]Alerta #{alert_id} não encontrado.[/yellow]")
+    else:
+        rt.console.print(
+            f"[green]Filtros do alerta #{alert_id} atualizados:[/green] "
+            f"{', '.join(rule.describe())}"
+        )
+    if not changed:
+        raise typer.Exit(code=int(ExitCode.NO_RESULTS))
+
+
+@rule_app.command("clear")
+def clear_rule(ctx: typer.Context, alert_id: Annotated[int, typer.Argument()]) -> None:
+    """Remove todos os filtros inteligentes, mantendo preço/desconto."""
+    rt: RuntimeContext = ctx.obj
+    ensure_database(rt)
+    changed = SqliteRepository(rt.database).set_alert_rule(
+        alert_id, AlertRule(), now=rt.clock.now()
+    )
+    if rt.json_output:
+        emit_json(
+            envelope(
+                "alerts.rule.clear",
+                generated_at=rt.clock.now().isoformat(),
+                alert_id=alert_id,
+                changed=changed,
+                rule=_rule_payload(AlertRule()),
+            )
+        )
+    elif not changed:
+        rt.error_console.print(f"[yellow]Alerta #{alert_id} não encontrado.[/yellow]")
+    else:
+        rt.console.print(f"[green]Filtros do alerta #{alert_id} removidos.[/green]")
+    if not changed:
+        raise typer.Exit(code=int(ExitCode.NO_RESULTS))

@@ -179,6 +179,30 @@ def test_erro_em_ciclo_nao_derruba_monitor(database: Database) -> None:
     assert state == "error"
 
 
+def test_muitos_ciclos_com_relogio_falso(database: Database) -> None:
+    """Exercita o laço do monitor por um dia simulado sem esperar em tempo real."""
+    clock = FrozenClock(datetime(2026, 3, 15, 12, 0, tzinfo=UTC))
+    outcome = AlertOutcome(alert_id=1, label="x", matched=False)
+    alerts = FakeAlerts([outcome])
+    service = _service(database, clock, alerts, interval_seconds=60)
+    slept: list[float] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        slept.append(seconds)
+        clock.advance(seconds=seconds)
+
+    result = asyncio.run(service.run(cycles=1440, ignore_quiet_hours=True, sleep=fake_sleep))
+
+    assert len(result.cycles) == 1440
+    assert len(slept) == 1439
+    assert result.checked == 1440
+    assert result.status == "ok"
+    summary = SqliteRepository(database).last_monitor_run()
+    assert summary is not None
+    assert summary["cycles"] == 1440
+    assert summary["alerts_checked"] == 1440
+
+
 def test_estado_e_historico_persistidos(database: Database) -> None:
     clock = FrozenClock(datetime(2026, 3, 15, 12, 0, tzinfo=UTC))
     service = _service(database, clock, FakeAlerts())

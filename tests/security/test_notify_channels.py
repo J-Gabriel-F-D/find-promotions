@@ -15,6 +15,11 @@ from dealhunter.runtime.config import NotificationSettings
 
 TOKEN = "tok_super_secreto_123"
 PHONE = "+5511999999999"
+PUBLIC_IP = "93.184.216.34"
+
+
+def _public_resolver(_host: str, _port: int) -> list[str]:
+    return [PUBLIC_IP]
 
 
 def _message() -> NotificationMessage:
@@ -126,6 +131,7 @@ class TestSms:
             "sender": "DealHunter",
             "token": TOKEN,
             "transport": transport,
+            "resolver": _public_resolver,
         }
         values.update(overrides)
         return SmsChannel(**values)  # type: ignore[arg-type]
@@ -135,18 +141,64 @@ class TestSms:
 
         def handler(request: httpx.Request) -> httpx.Response:
             captured["url"] = str(request.url)
+            captured["host"] = request.headers.get("host")
+            captured["sni"] = request.extensions.get("sni_hostname")
             captured["auth"] = request.headers.get("authorization")
             captured["payload"] = json.loads(request.content)
             return httpx.Response(202, json={"ok": True})
 
         self._channel(httpx.MockTransport(handler)).send(_message())
 
-        assert captured["url"] == "https://sms.example.com/v1/messages"
+        # DNS pinning: conecta ao IP validado, mas preserva Host/SNI originais.
+        assert captured["url"] == f"https://{PUBLIC_IP}/v1/messages"
+        assert captured["host"] == "sms.example.com"
+        assert captured["sni"] == "sms.example.com"
         assert captured["auth"] == f"Bearer {TOKEN}"
         payload = captured["payload"]
         assert isinstance(payload, dict)
         assert payload["to"] == PHONE
         assert "Redmi" in payload["message"]
+
+    @pytest.mark.parametrize(
+        "resolver",
+        [
+            lambda _host, _port: ["127.0.0.1"],
+            lambda _host, _port: ["10.0.0.5"],
+            lambda _host, _port: ["169.254.169.254"],
+            lambda _host, _port: [PUBLIC_IP, "192.168.0.10"],
+        ],
+    )
+    def test_dns_para_ip_privado_e_recusado(self, resolver) -> None:  # type: ignore[no-untyped-def]
+        with pytest.raises(ValueError):
+            self._channel(
+                httpx.MockTransport(lambda _request: httpx.Response(200)), resolver=resolver
+            )
+
+    def test_falha_de_dns_nao_registra_canal(self) -> None:
+        def failing(_host: str, _port: int) -> list[str]:
+            raise OSError("NXDOMAIN")
+
+        with pytest.raises(ValueError, match="resolver"):
+            self._channel(
+                httpx.MockTransport(lambda _request: httpx.Response(200)), resolver=failing
+            )
+
+    def test_ipv6_validado_e_prefixado_na_url(self) -> None:
+        captured: dict[str, object] = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured["url"] = str(request.url)
+            captured["host"] = request.headers.get("host")
+            return httpx.Response(202)
+
+        channel = self._channel(
+            httpx.MockTransport(handler),
+            resolver=lambda _host, _port: ["2606:2800:220:1:248:1893:25c8:1946"],
+        )
+        channel.send(_message())
+
+        assert str(captured["url"]).startswith("https://[2606:2800:")
+        assert captured["host"] == "sms.example.com"
 
     def test_erro_http_nao_vaza_token(self) -> None:
         def handler(_request: httpx.Request) -> httpx.Response:
@@ -200,6 +252,7 @@ class TestRegistry:
                 "DEALHUNTER_WHATSAPP_TOKEN": TOKEN,
                 "DEALHUNTER_SMS_TOKEN": TOKEN,
             },
+            resolver=_public_resolver,
         )
 
         assert notifier.supports("whatsapp")

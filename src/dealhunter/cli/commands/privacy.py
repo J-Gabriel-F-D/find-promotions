@@ -17,6 +17,7 @@ from dealhunter.cli.render import emit_json, envelope
 from dealhunter.cli.wiring import ensure_database
 from dealhunter.runtime.config import mask_config_pii
 from dealhunter.runtime.container import RuntimeContext
+from dealhunter.runtime.secrets import SecretStore
 
 app = typer.Typer(
     help="Exporta, esquece ou aplica retenção aos seus dados locais.",
@@ -30,14 +31,25 @@ def _service(rt: RuntimeContext) -> PrivacyService:
 
 
 def _profile(rt: RuntimeContext, *, include_contacts: bool = False) -> dict[str, Any]:
-    profile = rt.config if include_contacts else mask_config_pii(rt.config)
+    if include_contacts:
+        store = SecretStore()
+        email_from = store.resolve(rt.config.notifications.email_from)
+        email_to = store.resolve(rt.config.notifications.email_to)
+        channels = list(rt.config.notifications.channels)
+        retention_days = rt.config.privacy.retention_days
+    else:
+        masked = mask_config_pii(rt.config)
+        email_from = masked.notifications.email_from
+        email_to = masked.notifications.email_to
+        channels = list(masked.notifications.channels)
+        retention_days = masked.privacy.retention_days
     return {
         "notifications": {
-            "channels": list(profile.notifications.channels),
-            "email_from": profile.notifications.email_from,
-            "email_to": profile.notifications.email_to,
+            "channels": channels,
+            "email_from": email_from,
+            "email_to": email_to,
         },
-        "privacy": {"retention_days": profile.privacy.retention_days},
+        "privacy": {"retention_days": retention_days},
     }
 
 

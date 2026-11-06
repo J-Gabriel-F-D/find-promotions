@@ -22,6 +22,8 @@ from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path
 
+from dealhunter.runtime.permissions import restrict_path
+
 MIGRATIONS_DIR = Path(__file__).resolve().parents[2] / "data" / "migrations"
 SCHEMA_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS schema_migration (
@@ -71,6 +73,7 @@ class Database:
     def connect(self) -> Iterator[sqlite3.Connection]:
         """Abre conexão configurada; faz commit no sucesso e rollback no erro."""
         self._path.parent.mkdir(parents=True, exist_ok=True)
+        created = not self._path.exists()
         connection = sqlite3.connect(self._path, timeout=5.0)
         connection.row_factory = sqlite3.Row
         if os.name != "nt":
@@ -89,6 +92,10 @@ class Database:
             raise
         finally:
             connection.close()
+            if created:
+                # A ACL/chmod do diretório pai já herda para os arquivos; ainda
+                # assim restringimos o banco explicitamente quando ele nasce.
+                restrict_path(self._path, directory=False)
 
     # ------------------------------------------------------------------ migrações
     def migrate(self) -> MigrationResult:

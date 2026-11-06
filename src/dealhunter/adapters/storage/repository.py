@@ -1067,6 +1067,44 @@ class SqliteRepository:
             )
             return int(cursor.lastrowid or 0)
 
+    def reserve_notification(
+        self,
+        *,
+        event_id: int | None,
+        channel: str,
+        destination: str | None,
+        subject: str,
+        body: str,
+        now: datetime,
+        since: datetime,
+        limit: int,
+    ) -> int | None:
+        """Reserva uma notificação se a janela ainda tiver capacidade.
+
+        Contagem e inserção acontecem na mesma transação ``BEGIN IMMEDIATE``.
+        O lock de escrita do SQLite serializa instâncias/processos concorrentes,
+        eliminando a janela de corrida entre "contar" e "enfileirar".
+        """
+        if limit <= 0:
+            return None
+        with self._db.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT COUNT(*) FROM notification WHERE created_at >= ?",
+                (iso(since),),
+            ).fetchone()
+            if row is not None and int(row[0]) >= limit:
+                return None
+            cursor = connection.execute(
+                """
+                INSERT INTO notification
+                    (event_id, channel, destination, subject, body, status, created_at)
+                VALUES (?, ?, ?, ?, ?, 'pending', ?)
+                """,
+                (event_id, channel, destination, subject, body, iso(now)),
+            )
+            return int(cursor.lastrowid or 0)
+
     def mark_notification(
         self,
         notification_id: int,

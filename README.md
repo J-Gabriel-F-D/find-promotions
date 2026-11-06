@@ -61,7 +61,11 @@ Limite explícito: cupom continua sendo **declaração da fonte**, não validaç
 ### O que a Fase 4 adiciona
 
 - **`monitor`** executa ciclos de verificação sem duplicar a lógica de alertas. Opções:
-  `--once` (cron), `--cycles N`, `--interval S`, `--source`, `--ignore-quiet-hours`.
+  `--once` (cron), `--cycles N`, `--interval S`, `--source`, `--ignore-quiet-hours`,
+  `--daemon` e `--stop`.
+- **Segundo plano com PID file**: `--daemon` inicia um processo destacado e grava
+  `monitor.pid`; `--stop` lê o PID, confere o lock e encerra apenas o monitor real,
+  removendo resíduos de PID antigo/corrompido.
 - **Lock exclusivo por máquina**: duas instâncias do monitor não rodam ao mesmo tempo
   (`%APPDATA%\dealhunter\monitor.lock` no Windows; `$XDG_DATA_HOME/dealhunter/monitor.lock`
   no Linux). O lock é liberado no fim, inclusive em interrupção.
@@ -73,10 +77,20 @@ Limite explícito: cupom continua sendo **declaração da fonte**, não validaç
   última execução. `monitor --json` inclui `previous_run` e o detalhe de cada ciclo.
 - **Alertas inteligentes** opcionais, gravados em `alert_rule`: `--min-trust`,
   `--max-risk`, `--require-real-discount` e `--min-analysis-confidence`. São filtros
-  probabilísticos sobre evidência observável, não um veredito de fraude.
+  probabilísticos sobre evidência observável, não um veredito de fraude. Depois de
+  criados, podem ser editados com `alerts rule show|set|clear`.
 - **WhatsApp** somente pela **Meta Cloud API** (template aprovado obrigatório).
   **SMS** somente por endpoint **HTTPS oficial** configurado, com token no cofre.
-  Ambos ficam desligados por padrão e recusam redirecionamentos.
+  Ambos ficam desligados por padrão e recusam redirecionamentos. O SMS resolve o
+  DNS, valida **todos** os IPs como públicos e fixa o IP na conexão, preservando
+  `Host`/SNI e o certificado TLS.
+- **Contatos por referência**: `email_to`, `email_from`, `smtp_user`, `whatsapp_phone`,
+  `sms_to` e `sms_from` aceitam `env:NOME`/`keyring:NOME`; o TOML não precisa guardar
+  telefone/e-mail em texto claro.
+- **Rate limit global**: a reserva da notificação (contagem + inserção) é atômica no
+  SQLite (`BEGIN IMMEDIATE`), então o limite por hora vale entre processos/instâncias.
+- **Permissões locais**: POSIX usa `0700/0600`; no Windows a ACL é restringida via
+  `icacls` (remove herança e concede acesso só ao usuário atual).
 - **CI multiplataforma** (Ubuntu e Windows × Python 3.12/3.13/3.14) com lint, tipos,
   bandit, detect-secrets, pip-audit e cobertura mínima de 85%.
 
@@ -99,8 +113,11 @@ Limite explícito: cupom continua sendo **declaração da fonte**, não validaç
 - **WhatsApp exige template aprovado pela Meta** e número/`phone_number_id` válidos; o canal não
   existe fora da API oficial. **SMS** precisa de um provedor oficial com endpoint HTTPS; não há
   gateway não documentado, modem ou automação de aplicativo.
-- O monitor roda enquanto o processo estiver vivo. Para execução permanente, use `--once` em
-  cron/Task Scheduler/systemd timer ou mantenha o processo supervisionado.
+- `monitor --daemon` cobre execução permanente simples no mesmo usuário/máquina. Ele não
+  substitui um supervisor de serviço (systemd/Task Scheduler) para reinício após reboot
+  ou falha do sistema operacional; use `--once` em timer se preferir essa integração.
+- A entrega real de WhatsApp/SMS e o soak de longa duração são **opt-in** e não rodam no
+  CI padrão; exigem credenciais oficiais e podem gerar custo.
 - Cooldown é por **alerta**, não por oferta: se dois alertas diferentes casarem com a mesma
   oferta, cada um tem sua própria janela.
 - Não faz scraping de HTML de lojas. Novas lojas entram por **feed JSON documentado** ou API oficial.
@@ -203,6 +220,14 @@ dealhunter alerts create "rtx 4070" --max-price 4500 \
 | `--require-real-discount` | exige desconto `likely_real` corroborado pelo histórico |
 | `--min-analysis-confidence 0..1` | exige cobertura mínima da análise |
 
+Os filtros podem ser alterados depois, sem recriar o alerta:
+
+```bash
+dealhunter alerts rule show 1
+dealhunter alerts rule set 1 --min-trust 70 --max-risk moderate
+dealhunter alerts rule clear 1        # mantém preço/desconto, remove filtros inteligentes
+```
+
 ### Monitor contínuo
 
 ```bash
@@ -210,12 +235,18 @@ dealhunter monitor --once                         # um ciclo (cron)
 dealhunter monitor --cycles 3 --interval 900      # três ciclos, 15 min entre eles
 dealhunter monitor --source fixture --ignore-quiet-hours
 dealhunter --json monitor --once                  # envelope com ciclos e previous_run
+dealhunter monitor --daemon --interval 900        # inicia em segundo plano
+dealhunter monitor --stop                         # encerra o monitor em segundo plano
 ```
 
-`--json` exige `--once` ou `--cycles` (uma execução infinita não tem documento final).
-Em `--quiet`, o terminal fica silencioso, mas canais externos (e-mail/WhatsApp/SMS)
-continuam enviando. O comando usa lock exclusivo e retorna `1` se outra instância estiver
-ativa ou se o ciclo falhar.
+`--json` exige `--once` ou `--cycles` (uma execução infinita não tem documento final);
+com `--daemon`, o envelope retorna imediatamente. Em `--quiet`, o terminal fica
+silencioso, mas canais externos (e-mail/WhatsApp/SMS) continuam enviando. O comando usa
+lock exclusivo e retorna `1` se outra instância estiver ativa ou se o ciclo falhar.
+
+O PID fica em `monitor.pid`, ao lado do lock. `--stop` é idempotente, remove PID
+antigo/corrompido e só encerra o processo quando o lock do monitor está ocupado — isso
+evita matar um PID reciclado pelo sistema. `--daemon` não combina com `--once`/`--cycles`.
 
 ### Notificações
 
@@ -236,7 +267,27 @@ keyring). Configure `whatsapp_phone`, `whatsapp_phone_number_id` e
 
 **SMS** usa um endpoint **HTTPS oficial** configurado em `sms_api_url`, com JSON
 `{"to", "from", "message"}` e token Bearer de `DEALHUNTER_SMS_TOKEN` (ou keyring).
-Endpoints HTTP, hosts locais/IPs privados e redirecionamentos são recusados.
+Endpoints HTTP, hosts locais/IPs privados e redirecionamentos são recusados. O DNS é
+resolvido uma vez, todos os endereços precisam ser públicos e o IP validado é fixado na
+conexão (`Host`/SNI originais), fechando a janela de DNS rebinding/TOCTOU.
+
+Contatos podem apontar para o ambiente ou para o keyring, sem gravar PII no TOML:
+
+```toml
+[notifications]
+email_to = "env:CONTATO_EMAIL"
+email_from = "keyring:CONTATO_EMAIL"
+whatsapp_phone = "env:CONTATO_WHATSAPP"
+sms_to = "keyring:CONTATO_SMS"
+```
+
+`config show` mascara a referência como `env:***`/`keyring:***` (nem o nome da variável
+aparece). `privacy export --include-contacts` é o único caminho que resolve e revela o
+valor real; sem o opt-in, a exportação mantém a máscara.
+
+O limite `max_per_hour` é aplicado por uma reserva atômica no SQLite: a contagem e a
+inserção da notificação acontecem na mesma transação, então duas instâncias do monitor
+não conseguem ultrapassar o teto juntas.
 
 ```bash
 dealhunter notify status     # mostra console/email/whatsapp/sms disponíveis
@@ -271,8 +322,9 @@ dealhunter privacy retention --days 90 --apply  # executa a retenção
 
 A exportação contém alertas, eventos e metadados de notificação; contatos do
 perfil aparecem mascarados por padrão (`--include-contacts` revela os e-mails
-reais). `forget` não altera o `config.toml` — remova
-e-mails/SMTP manualmente se quiser eliminar também esses dados. O catálogo
+reais, inclusive quando o TOML usa `env:`/`keyring:`). `forget` não altera o
+`config.toml` — remova e-mails/SMTP manualmente se quiser eliminar também esses
+dados. Para evitar PII no TOML desde o início, use referências de contato. O catálogo
 público de produtos, preços e textos de avaliação publicados pela fonte não é
 apagado — são declarações da fonte, não dados do usuário. A retenção remove
 eventos e notificações antigos, mas preserva a chave de deduplicação enquanto o
@@ -524,13 +576,14 @@ max_active_alerts = 50
 
 [notifications]
 channels = ["console"]
-max_per_hour = 30
-# email_to = "voce@exemplo.com"
+max_per_hour = 30               # reserva atômica, válida entre instâncias
+# Contatos podem ser literais ou referências env:/keyring: (recomendado)
+# email_to = "env:CONTATO_EMAIL"
 # smtp_host = "smtp.exemplo.com"
-# smtp_user = "conta@exemplo.com"
-# email_from = "conta@exemplo.com"
+# smtp_user = "keyring:SMTP_USUARIO"
+# email_from = "keyring:CONTATO_EMAIL"
 # WhatsApp (Meta Cloud API): template aprovado é obrigatório
-# whatsapp_phone = "+5511999999999"
+# whatsapp_phone = "env:CONTATO_WHATSAPP"
 # whatsapp_phone_number_id = "123456789012345"
 # whatsapp_template = "oferta_dealhunter"
 # whatsapp_template_language = "pt_BR"
@@ -551,7 +604,10 @@ retention_days = 90             # eventos/notificações mais antigos
 ```
 
 **Segredos nunca vão no TOML**. O arquivo guarda apenas o nome da variável de
-ambiente; o valor pode vir dela ou do keyring (ambiente tem precedência).
+ambiente; o valor pode vir dela ou do keyring (ambiente tem precedência). Contatos
+podem usar o mesmo mecanismo (`env:NOME`/`keyring:NOME`), evitando telefone/e-mail em
+texto claro. No Windows, config/dados/logs recebem ACL restritiva via `icacls`; no
+POSIX, `0700` para diretórios e `0600` para arquivos.
 
 ### Fonte `feed` (adapter genérico)
 
@@ -726,6 +782,10 @@ Decisões registradas: [`docs/adr`](docs/adr).
 .venv\Scripts\python -m ruff check src tests
 .venv\Scripts\python -m ruff format --check src tests
 .venv\Scripts\python -m mypy src
+
+# Opt-in, fora do CI: envio real e soak prolongado
+$env:DEALHUNTER_LIVE_NOTIFY = "1"; .venv\Scripts\python -m pytest tests/live
+$env:DEALHUNTER_SOAK = "1"; .venv\Scripts\python -m pytest tests/soak
 ```
 
 Atalhos reproduzíveis: `.\scripts\test.ps1 all` no Windows e `make test-all`

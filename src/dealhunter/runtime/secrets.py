@@ -18,6 +18,8 @@ KEYRING_SERVICE = "dealhunter"
 MAX_SECRET_CHARS = 4_096
 _NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
 _DISABLE_ENV = "DEALHUNTER_DISABLE_KEYRING"
+ENV_REFERENCE = "env:"
+KEYRING_REFERENCE = "keyring:"
 
 
 class KeyringBackend(Protocol):
@@ -44,6 +46,19 @@ def load_keyring() -> KeyringBackend | None:
 
 def is_valid_secret_name(name: str) -> bool:
     return bool(_NAME.fullmatch(name))
+
+
+def parse_reference(value: str) -> tuple[str, str] | None:
+    """Separa ``env:NOME``/``keyring:NOME`` em (origem, nome).
+
+    Devolve ``None`` para valores literais ou referências malformadas. O
+    chamador nunca deve tratar o nome da variável como o próprio contato.
+    """
+    for prefix, source in ((ENV_REFERENCE, "env"), (KEYRING_REFERENCE, "keyring")):
+        if value.startswith(prefix):
+            name = value[len(prefix) :]
+            return (source, name) if is_valid_secret_name(name) else None
+    return None
 
 
 def _truthy(value: str | None) -> bool:
@@ -76,11 +91,19 @@ class SecretStore:
         return self._get_backend() is not None
 
     def get(self, name: str) -> str | None:
+        value = self.get_env(name)
+        if value:
+            return value
+        return self.get_keyring(name)
+
+    def get_env(self, name: str) -> str | None:
         if not is_valid_secret_name(name):
             return None
-        from_env = self._environ.get(name)
-        if from_env:
-            return from_env
+        return self._environ.get(name) or None
+
+    def get_keyring(self, name: str) -> str | None:
+        if not is_valid_secret_name(name):
+            return None
         backend = self._get_backend()
         if backend is None:
             return None
@@ -90,13 +113,30 @@ class SecretStore:
             return None
         return value or None
 
+    def resolve(self, value: str | None) -> str | None:
+        """Resolve uma referência explícita sem nunca devolver o nome bruto.
+
+        Valores literais (``joao@example.com``) continuam intactos. Para
+        ``env:NOME`` consulta apenas o ambiente; para ``keyring:NOME``, apenas
+        o cofre. Referência inválida ou ausente resulta em ``None``.
+        """
+        if not value:
+            return value
+        reference = parse_reference(value)
+        if reference is None:
+            if value.startswith((ENV_REFERENCE, KEYRING_REFERENCE)):
+                return None
+            return value
+        source, name = reference
+        return self.get_env(name) if source == "env" else self.get_keyring(name)
+
     def source(self, name: str) -> str | None:
         """Diz de onde o valor vem, sem devolvê-lo."""
         if not is_valid_secret_name(name):
             return None
         if self._environ.get(name):
             return "env"
-        return "keyring" if self.get(name) is not None else None
+        return "keyring" if self.get_keyring(name) is not None else None
 
     def set(self, name: str, value: str) -> None:
         if not is_valid_secret_name(name):

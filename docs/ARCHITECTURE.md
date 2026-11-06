@@ -217,6 +217,13 @@ Scheduler asyncio in-process. Sem Redis, sem fila externa.
 * `monitor --once` — um ciclo (cron/Task Scheduler/systemd timer).
 * `monitor --cycles N --interval S` — execução finita, útil para batches.
 * `monitor` — ciclos contínuos até interrupção, com lock exclusivo mantido aberto.
+* `monitor --daemon` — reexecuta a própria CLI como processo destacado e retorna;
+  `monitor --stop` encerra via PID file, mas só depois de confirmar que o lock do
+  monitor está ocupado.
+
+O PID file (`monitor.pid`) é auxiliar e privado. Um PID existente não prova que o
+processo é o monitor: `--stop` valida o lock antes de enviar sinal, reduzindo o risco
+de matar um PID reciclado. PIDs ausentes/corrompidos são removidos.
 
 O monitor reutiliza `AlertService.check`; não duplica regras, dedupe nem outbox.
 `monitor_run` registra cada sessão e `monitor_state` guarda o último estado.
@@ -229,6 +236,21 @@ Canais: console, SMTP, **WhatsApp Cloud API (Meta, template obrigatório)** e
 fuso do usuário, dedupe por `hash(alert_id, offer_id, faixa_de_preço, cupom)`.
 WhatsApp e SMS ficam desligados sem configuração completa; tokens vêm do ambiente
 ou keyring, nunca do TOML.
+
+O teto `notifications.max_per_hour` é aplicado por `reserve_notification` com
+`BEGIN IMMEDIATE`: contar e inserir acontecem na mesma transação, então o limite é
+global entre conexões, instâncias e processos que compartilham o banco. Se o teto
+já foi atingido, o canal registra a falha sem enviar.
+
+Contatos (`email_to`, `email_from`, `smtp_user`, `whatsapp_phone`, `sms_to`,
+`sms_from`) aceitam referências `env:NOME`/`keyring:NOME`. A referência é resolvida
+no composition root do notifier; `config show` e exportações sem opt-in exibem
+`env:***`/`keyring:***`, nunca o nome ou o valor.
+
+O adapter SMS resolve o DNS, recusa se **qualquer** endereço for privado/loopback/
+link-local/reservado e fixa o IP validado na URL da conexão, mantendo `Host` e
+`sni_hostname` originais. `trust_env=False` impede que um proxy ambiente troque o
+destino. Redirecionamentos não são seguidos.
 
 ## 12. IA
 
@@ -256,6 +278,13 @@ renderizar, mais `escape` de markup) · SQL parametrizado · segredos em
 variáveis de ambiente ou keyring opcional (env tem precedência) · redação em
 logs · permissões restritas no banco · auditoria de mudanças de estado ·
 `interactive` sem shell escape/`eval`.
+
+Permissões locais: POSIX usa `0700` em diretórios e `0600` em arquivos; Windows usa
+`icacls` com `/inheritance:r /grant:r <usuário>:(OI)(CI)F` (diretório) ou
+`<usuário>:F` (arquivo). A restrição é best effort: falhas não derrubam a CLI, mas
+são cobertas por testes no SO correspondente. `subprocess` é permitido apenas em
+`runtime/permissions.py` (icacls) e `cli/commands/monitor.py` (spawn do daemon),
+sempre com lista fixa de argumentos, sem shell e sem interpolar entrada do usuário.
 
 ## 14. LGPD
 
@@ -369,12 +398,17 @@ e a análise não prova fraude nem representa toda a base de clientes.
 |---|---|
 | Monitor | `MonitorService` com ciclos, `--once`, `--cycles`, intervalo, quiet hours, cooldown por alerta, callback de ciclo e erros isolados |
 | Estado | migração `0006_fase4`: `monitor_run`, `monitor_state`; `monitor --json` expõe `previous_run`, ciclos e totais |
+| Daemon/PID | `monitor --daemon/--stop`, `runtime/process.py` (PID atômico/privado), spawn sem shell e parada só com lock ocupado |
 | Lock | `adapters/storage/lock.py` com `flock` (POSIX) / `msvcrt.locking` (Windows), não bloqueante, liberado em `finally` |
-| Alertas inteligentes | `alert_rule` opcional: `min_trust`, `max_risk`, `require_real_discount`, `min_analysis_confidence`; filtros aplicados sobre `trust` |
+| Alertas inteligentes | `alert_rule` opcional: `min_trust`, `max_risk`, `require_real_discount`, `min_analysis_confidence`; editáveis com `alerts rule show/set/clear` |
 | WhatsApp | `adapters/notify/whatsapp.py` pela Meta Cloud API, template obrigatório, `follow_redirects=False`, token nunca ecoado |
-| SMS | `adapters/notify/sms.py` por endpoint HTTPS oficial, payload JSON mínimo, bloqueio de hosts locais/IP privado/credenciais/fragmento |
+| SMS | `adapters/notify/sms.py` por endpoint HTTPS oficial, DNS pinning com validação de todos os IPs, `Host`/SNI originais, `trust_env=False` |
+| Rate limit | `reserve_notification` com `BEGIN IMMEDIATE`; limite global entre processos, não apenas por instância |
+| Contatos | referências `env:`/`keyring:` resolvidas no notifier; `config show`/exportação padrão mascaram origem e nome |
 | Notificações | `notify status` lista console/e-mail/WhatsApp/SMS; canais só entram com configuração completa |
+| Permissões | POSIX `0700/0600`; Windows ACL via `icacls`, verificada nos testes do Windows |
 | CLI | `monitor` com `--json`/`--quiet`, validação de fonte, exit code 1 para lock/erro e 2 para uso inválido |
+| Testes opt-in | `tests/live` (WhatsApp/SMS reais) e `tests/soak` (milhares de ciclos), fora do CI padrão |
 | CI | GitHub Actions em Ubuntu/Windows × Python 3.12/3.13/3.14 + lint, mypy, bandit, detect-secrets e pip-audit |
 
 Decisões e limites da Fase 4:
@@ -392,7 +426,14 @@ Decisões e limites da Fase 4:
 5. **`--json` exige execução finita.** `--once` ou `--cycles`; sem isso, não há
    documento final para o envelope.
 6. **CI usa matriz real.** Linux valida permissões POSIX e o lock `flock`;
-   Windows valida `msvcrt`, caminhos e `tzdata`.
+   Windows valida `msvcrt`, ACL via `icacls`, caminhos e `tzdata`.
+7. **Daemon não é serviço.** `--daemon`/PID file resolvem execução permanente no
+   mesmo usuário, mas não substituem supervisor de reboot (systemd/Task Scheduler).
+8. **Rate limit é local ao banco.** A transação atômica serializa processos que
+   compartilham o mesmo SQLite; máquinas/perfis distintos têm tetos independentes.
+9. **Entrega real e soak são opt-in.** `DEALHUNTER_LIVE_NOTIFY=1` e
+   `DEALHUNTER_SOAK=1` habilitam testes que gastam dinheiro/tempo e por isso não
+   entram no CI padrão.
 
 ### Dados de demonstração
 

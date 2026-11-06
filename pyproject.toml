@@ -66,6 +66,8 @@ markers = [
   "e2e: fluxos completos pela CLI",
   "functional: contrato funcional da CLI",
   "regression: regressões de falhas corrigidas",
+  "live: entrega real a provedores externos (opt-in)",
+  "soak: execução prolongada do monitor (opt-in)",
 ]
 
 [tool.coverage.run]

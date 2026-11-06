@@ -264,19 +264,21 @@ class AlertService:
                 results.append((channel, False, "canal não disponível"))
                 continue
 
-            since = self._clock.now() - timedelta(hours=1)
-            if self._repo.count_notifications_since(since) >= self._max_per_hour:
-                results.append((channel, False, "limite de notificações por hora atingido"))
-                continue
-
-            notification_id = self._repo.enqueue_notification(
+            now = self._clock.now()
+            notification_id = self._repo.reserve_notification(
                 event_id=event_id,
                 channel=channel,
                 destination=None,
                 subject=message.subject,
                 body=message.body,
-                now=self._clock.now(),
+                now=now,
+                since=now - timedelta(hours=1),
+                limit=self._max_per_hour,
             )
+            if notification_id is None:
+                results.append((channel, False, "limite de notificações por hora atingido"))
+                continue
+
             ok, error = await self._notifier.send(channel, message)
             self._repo.mark_notification(
                 notification_id,
