@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 
 from dealhunter.adapters.storage.database import Database
 from dealhunter.application.dto import (
+    AlertRule,
     CouponRow,
     OfferRow,
     PriceSample,
@@ -783,6 +784,7 @@ class SqliteRepository:
         min_discount_pct: float | None,
         channels: Sequence[str],
         now: datetime,
+        rule: AlertRule | None = None,
     ) -> int:
         with self._db.connect() as connection:
             cursor = connection.execute(
@@ -801,13 +803,73 @@ class SqliteRepository:
                     iso(now),
                 ),
             )
-            return int(cursor.lastrowid or 0)
+            alert_id = int(cursor.lastrowid or 0)
+            if rule is not None and not rule.is_empty:
+                self._write_rule(connection, alert_id, rule, now)
+            return alert_id
+
+    @staticmethod
+    def _write_rule(
+        connection: sqlite3.Connection, alert_id: int, rule: AlertRule, now: datetime
+    ) -> None:
+        connection.execute(
+            """
+            INSERT INTO alert_rule
+                (alert_id, min_trust, max_risk, require_real_discount,
+                 min_analysis_confidence, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT (alert_id) DO UPDATE SET
+                min_trust = excluded.min_trust,
+                max_risk = excluded.max_risk,
+                require_real_discount = excluded.require_real_discount,
+                min_analysis_confidence = excluded.min_analysis_confidence,
+                created_at = excluded.created_at
+            """,
+            (
+                alert_id,
+                rule.min_trust,
+                rule.max_risk,
+                1 if rule.require_real_discount else 0,
+                rule.min_analysis_confidence,
+                iso(now),
+            ),
+        )
+
+    def set_alert_rule(self, alert_id: int, rule: AlertRule, *, now: datetime) -> bool:
+        with self._db.connect() as connection:
+            exists = connection.execute("SELECT 1 FROM alert WHERE id = ?", (alert_id,)).fetchone()
+            if exists is None:
+                return False
+            if rule.is_empty:
+                connection.execute("DELETE FROM alert_rule WHERE alert_id = ?", (alert_id,))
+            else:
+                self._write_rule(connection, alert_id, rule, now)
+            return True
+
+    def get_alert_rule(self, alert_id: int) -> AlertRule:
+        with self._db.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM alert_rule WHERE alert_id = ?", (alert_id,)
+            ).fetchone()
+        if row is None:
+            return AlertRule()
+        return AlertRule(
+            min_trust=row["min_trust"],
+            max_risk=row["max_risk"],
+            require_real_discount=bool(row["require_real_discount"]),
+            min_analysis_confidence=row["min_analysis_confidence"],
+        )
 
     def list_alerts(self, *, only_active: bool = False) -> list[StoredAlert]:
-        sql = "SELECT * FROM alert"
+        sql = """
+            SELECT a.*, r.min_trust, r.max_risk, r.require_real_discount,
+                   r.min_analysis_confidence
+            FROM alert AS a
+            LEFT JOIN alert_rule AS r ON r.alert_id = a.id
+        """
         if only_active:
-            sql += " WHERE active = 1"
-        sql += " ORDER BY id"
+            sql += " WHERE a.active = 1"
+        sql += " ORDER BY a.id"
         with self._db.connect() as connection:
             rows = connection.execute(sql).fetchall()
         return [
@@ -822,6 +884,12 @@ class SqliteRepository:
                 active=bool(row["active"]),
                 created_at=row["created_at"],
                 last_checked_at=row["last_checked_at"],
+                rule=AlertRule(
+                    min_trust=row["min_trust"],
+                    max_risk=row["max_risk"],
+                    require_real_discount=bool(row["require_real_discount"]),
+                    min_analysis_confidence=row["min_analysis_confidence"],
+                ),
             )
             for row in rows
         ]
@@ -1039,3 +1107,96 @@ class SqliteRepository:
                 "SELECT COUNT(*) FROM notification WHERE created_at >= ?", (iso(since),)
             ).fetchone()
         return int(row[0]) if row else 0
+
+    def alerts_notified_since(self, since: datetime) -> set[int]:
+        """Alertas que notificaram algo desde ``since`` (janela de cooldown)."""
+        with self._db.connect() as connection:
+            rows = connection.execute(
+                "SELECT DISTINCT alert_id FROM alert_event WHERE created_at >= ?",
+                (iso(since),),
+            ).fetchall()
+        return {int(row[0]) for row in rows}
+
+    # ------------------------------------------------------------------ monitor
+    def start_monitor_run(self, *, trigger: str, now: datetime) -> int:
+        """Abre uma sessão do monitor e marca sessões órfãs como interrompidas."""
+        with self._db.connect() as connection:
+            connection.execute(
+                """
+                UPDATE monitor_run
+                SET status = 'interrupted', finished_at = ?
+                WHERE finished_at IS NULL
+                """,
+                (iso(now),),
+            )
+            cursor = connection.execute(
+                """
+                INSERT INTO monitor_run (trigger, started_at, status)
+                VALUES (?, ?, 'running')
+                """,
+                (trigger[:40], iso(now)),
+            )
+            return int(cursor.lastrowid or 0)
+
+    def finish_monitor_run(
+        self,
+        run_id: int,
+        *,
+        status: str,
+        cycles: int,
+        alerts_checked: int,
+        matched: int,
+        notifications: int,
+        error: str | None,
+        now: datetime,
+    ) -> None:
+        with self._db.connect() as connection:
+            connection.execute(
+                """
+                UPDATE monitor_run
+                SET finished_at = ?, status = ?, cycles = ?, alerts_checked = ?,
+                    matched = ?, notifications = ?, error = ?
+                WHERE id = ?
+                """,
+                (
+                    iso(now),
+                    status,
+                    cycles,
+                    alerts_checked,
+                    matched,
+                    notifications,
+                    (error or "")[:500] or None,
+                    run_id,
+                ),
+            )
+
+    def monitor_run_summary(self, run_id: int) -> dict[str, object] | None:
+        with self._db.connect() as connection:
+            row = connection.execute("SELECT * FROM monitor_run WHERE id = ?", (run_id,)).fetchone()
+        return dict(row) if row else None
+
+    def last_monitor_run(self) -> dict[str, object] | None:
+        with self._db.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM monitor_run WHERE finished_at IS NOT NULL ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+        return dict(row) if row else None
+
+    def set_monitor_state(self, key: str, value: str, *, now: datetime) -> None:
+        with self._db.connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO monitor_state (key, value, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT (key) DO UPDATE SET
+                    value = excluded.value, updated_at = excluded.updated_at
+                """,
+                (key[:100], value[:2_000], iso(now)),
+            )
+
+    def get_monitor_state(self, key: str) -> str | None:
+        with self._db.connect() as connection:
+            row = connection.execute(
+                "SELECT value FROM monitor_state WHERE key = ?", (key[:100],)
+            ).fetchone()
+        return str(row[0]) if row else None

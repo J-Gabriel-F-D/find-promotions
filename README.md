@@ -15,7 +15,7 @@ Roda no terminal, sem servidor, sem Docker, sem dashboard web.
 | **1 — MVP** | `search`, fontes (Mercado Livre + feed + fixture), normalização/dedupe, histórico, `alerts`, e-mail | ✅ concluída |
 | **2 — Ofertas** | cupons, promoções, ranking por promoção, avaliações | ✅ concluída |
 | **3 — Confiança** | análise probabilística de confiança/antifraude, falso desconto, `picks.safest`, análise determinística de avaliações/reclamações, `interactive` | ✅ concluída |
-| 4 — Automação | `monitor` contínuo, WhatsApp/SMS, alertas inteligentes | ⏳ |
+| **4 — Automação** | `monitor` contínuo, alertas inteligentes, WhatsApp/SMS oficiais, CI multiplataforma | ✅ concluída |
 
 Decisões aprovadas: **Python 3.12+** · **Mercado Livre (API oficial) + fixture + adapter genérico** · **IA opcional com fallback determinístico**.
 
@@ -58,7 +58,29 @@ Limite explícito: cupom continua sendo **declaração da fonte**, não validaç
 - Limitações explícitas: meio de pagamento e idade do domínio **não** são coletados nesta fase.
   A análise nunca afirma fraude nem segurança absoluta.
 
-### Limites atuais (Fases 1–3)
+### O que a Fase 4 adiciona
+
+- **`monitor`** executa ciclos de verificação sem duplicar a lógica de alertas. Opções:
+  `--once` (cron), `--cycles N`, `--interval S`, `--source`, `--ignore-quiet-hours`.
+- **Lock exclusivo por máquina**: duas instâncias do monitor não rodam ao mesmo tempo
+  (`%APPDATA%\dealhunter\monitor.lock` no Windows; `$XDG_DATA_HOME/dealhunter/monitor.lock`
+  no Linux). O lock é liberado no fim, inclusive em interrupção.
+- **Quiet hours** no fuso de `general.timezone`: dentro da janela, nenhuma busca nem
+  notificação é executada. `00:00`/`00:00` desativa a janela.
+- **Cooldown por alerta**: alertas que notificaram recentemente são pulados no ciclo
+  (`monitor.cooldown_minutes`, padrão 720). O dedupe por oferta/faixa de preço continua valendo.
+- **Estado persistido**: `monitor_run` e `monitor_state` registram ciclos, contagens, erros e a
+  última execução. `monitor --json` inclui `previous_run` e o detalhe de cada ciclo.
+- **Alertas inteligentes** opcionais, gravados em `alert_rule`: `--min-trust`,
+  `--max-risk`, `--require-real-discount` e `--min-analysis-confidence`. São filtros
+  probabilísticos sobre evidência observável, não um veredito de fraude.
+- **WhatsApp** somente pela **Meta Cloud API** (template aprovado obrigatório).
+  **SMS** somente por endpoint **HTTPS oficial** configurado, com token no cofre.
+  Ambos ficam desligados por padrão e recusam redirecionamentos.
+- **CI multiplataforma** (Ubuntu e Windows × Python 3.12/3.13/3.14) com lint, tipos,
+  bandit, detect-secrets, pip-audit e cobertura mínima de 85%.
+
+### Limites atuais (Fases 1–4)
 
 - A confiança é **probabilística e limitada aos dados coletados**. Ela não substitui verificação
   manual, não consulta meio de pagamento e não prova idoneidade da loja.
@@ -74,6 +96,13 @@ Limite explícito: cupom continua sendo **declaração da fonte**, não validaç
   representam toda a base de clientes. `analysis_confidence` mede cobertura da amostra.
 - Nenhum texto de avaliação é gerado, resumido ou reescrito por IA nesta fase. A IA continua opcional
   e desligada por padrão.
+- **WhatsApp exige template aprovado pela Meta** e número/`phone_number_id` válidos; o canal não
+  existe fora da API oficial. **SMS** precisa de um provedor oficial com endpoint HTTPS; não há
+  gateway não documentado, modem ou automação de aplicativo.
+- O monitor roda enquanto o processo estiver vivo. Para execução permanente, use `--once` em
+  cron/Task Scheduler/systemd timer ou mantenha o processo supervisionado.
+- Cooldown é por **alerta**, não por oferta: se dois alertas diferentes casarem com a mesma
+  oferta, cada um tem sua própria janela.
 - Não faz scraping de HTML de lojas. Novas lojas entram por **feed JSON documentado** ou API oficial.
 - A fonte `fixture` é **demonstração offline**: preços, cupons, promoções e textos fictícios,
   marcados em toda saída (textos com `[demonstração]`).
@@ -159,6 +188,35 @@ dealhunter alerts delete 1
 Regras: `--max-price` (preço final, com frete) **ou** `--discount` (percentual abaixo
 da média histórica). A mesma oferta na mesma faixa de preço (R$ 50) não notifica duas vezes.
 
+Filtros inteligentes (opcionais, todos probabilísticos):
+
+```bash
+dealhunter alerts create "rtx 4070" --max-price 4500 \
+  --min-trust 60 --max-risk moderate \
+  --require-real-discount --min-analysis-confidence 0.4
+```
+
+| Opção | Efeito |
+|---|---|
+| `--min-trust 0..100` | exige `trust.score` mínimo |
+| `--max-risk low\|moderate\|elevated` | recusa risco observado acima do limite; `insufficient_data` **não** é tratado como risco baixo |
+| `--require-real-discount` | exige desconto `likely_real` corroborado pelo histórico |
+| `--min-analysis-confidence 0..1` | exige cobertura mínima da análise |
+
+### Monitor contínuo
+
+```bash
+dealhunter monitor --once                         # um ciclo (cron)
+dealhunter monitor --cycles 3 --interval 900      # três ciclos, 15 min entre eles
+dealhunter monitor --source fixture --ignore-quiet-hours
+dealhunter --json monitor --once                  # envelope com ciclos e previous_run
+```
+
+`--json` exige `--once` ou `--cycles` (uma execução infinita não tem documento final).
+Em `--quiet`, o terminal fica silencioso, mas canais externos (e-mail/WhatsApp/SMS)
+continuam enviando. O comando usa lock exclusivo e retorna `1` se outra instância estiver
+ativa ou se o ciclo falhar.
+
 ### Notificações
 
 ```bash
@@ -169,6 +227,22 @@ dealhunter notify test --channel console
 
 E-mail usa SMTP (`smtplib`). A senha vem de `DEALHUNTER_SMTP_PASSWORD` ou do
 keyring do sistema — nunca do TOML.
+
+**WhatsApp** usa a API oficial Meta Cloud API com um **template aprovado**. O
+resumo da oferta é enviado como `{{1}}` do corpo do template; não há WhatsApp Web,
+QR code ou sessão não oficial. O token vem de `DEALHUNTER_WHATSAPP_TOKEN` (ou
+keyring). Configure `whatsapp_phone`, `whatsapp_phone_number_id` e
+`whatsapp_template` em `[notifications]`.
+
+**SMS** usa um endpoint **HTTPS oficial** configurado em `sms_api_url`, com JSON
+`{"to", "from", "message"}` e token Bearer de `DEALHUNTER_SMS_TOKEN` (ou keyring).
+Endpoints HTTP, hosts locais/IPs privados e redirecionamentos são recusados.
+
+```bash
+dealhunter notify status     # mostra console/email/whatsapp/sms disponíveis
+dealhunter notify test --channel whatsapp
+dealhunter notify test --channel sms
+```
 
 ### Segredos
 
@@ -403,7 +477,7 @@ gera no máximo uma amostra por hora (mudança de preço é sempre registrada).
 | Flag | Efeito |
 |---|---|
 | `--json` | Saída JSON no stdout (logs continuam no stderr) |
-| `--quiet`, `-q` | Apenas eventos relevantes |
+| `--quiet`, `-q` | Sem ruído no terminal; canais externos continuam enviando |
 | `--debug` | Log detalhado, com segredos mascarados |
 | `--no-color` | Desativa cores |
 | `--no-unicode` | Usa caixas e símbolos ASCII em terminais limitados |
@@ -441,12 +515,31 @@ timezone = "America/Sao_Paulo"
 timeout_seconds = 20
 max_concurrency = 6
 
+[monitor]
+interval_seconds = 600          # espera entre ciclos
+quiet_hours_start = "22:00"     # janela sem buscas/notificações
+quiet_hours_end = "07:00"       # 00:00/00:00 desativa
+cooldown_minutes = 720          # por alerta que já notificou
+max_active_alerts = 50
+
 [notifications]
 channels = ["console"]
+max_per_hour = 30
 # email_to = "voce@exemplo.com"
 # smtp_host = "smtp.exemplo.com"
 # smtp_user = "conta@exemplo.com"
 # email_from = "conta@exemplo.com"
+# WhatsApp (Meta Cloud API): template aprovado é obrigatório
+# whatsapp_phone = "+5511999999999"
+# whatsapp_phone_number_id = "123456789012345"
+# whatsapp_template = "oferta_dealhunter"
+# whatsapp_template_language = "pt_BR"
+# whatsapp_token_env = "DEALHUNTER_WHATSAPP_TOKEN"
+# SMS por API HTTPS oficial
+# sms_api_url = "https://provedor.exemplo.com/v1/messages"
+# sms_to = "+5511999999999"
+# sms_from = "DealHunter"
+# sms_token_env = "DEALHUNTER_SMS_TOKEN"
 
 [sources]
 enabled = ["mercadolivre"]      # "fixture" só para demonstração
@@ -612,10 +705,10 @@ Arquitetura hexagonal: `cli → application → domain ← adapters`.
 
 ```
 src/dealhunter/
-├─ cli/            # Typer + Rich: comandos, render, ui, wiring
+├─ cli/            # Typer + Rich: comandos (incl. monitor), render, ui, wiring
 ├─ domain/         # modelos, value objects, portas (clock), ids
-├─ application/    # casos de uso (search, alerts, coupons, promotions, reviews), DTOs, intent
-├─ adapters/       # http (SSRF/robots), sources, storage, notify
+├─ application/    # casos de uso (search, alerts, monitor, coupons, promotions, reviews), DTOs, intent
+├─ adapters/       # http (SSRF/robots), sources, storage (lock), notify (console/smtp/whatsapp/sms)
 ├─ services/       # text, normalizer, matching, pricing, coupons, promotions, ranking
 ├─ runtime/        # config, logging, container, paths
 └─ data/           # migrations SQL

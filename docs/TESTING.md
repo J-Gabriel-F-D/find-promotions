@@ -91,12 +91,36 @@ Os marcadores são aplicados automaticamente pelo diretório em
 - `interactive` cobre `help`, EOF, `search`, `reviews`, `history`, `promotions`,
   comandos desconhecidos (incluindo tentativa de shell) e rejeição de
   `--json`/`--quiet`.
+- `monitor` cobre `--once`, `--cycles`, intervalo, callback, quiet hours que
+  cruzam a meia-noite, janela diurna desativada, cooldown por alerta, erros
+  isolados, estado persistido, execuções órfãs, lock, `--json` finito, `--quiet`
+  e validação de fonte desconhecida.
+- Alertas inteligentes cobrem cada filtro (`min_trust`, `max_risk`,
+  `require_real_discount`, `min_analysis_confidence`), rejeição de
+  `insufficient_data` como risco baixo, persistência em `alert_rule`, cascata de
+  exclusão, JSON da CLI e mensagem probabilística.
+- Canais externos simulam Meta Cloud API e endpoint SMS com
+  `httpx.MockTransport`: template, Bearer, payload, recusa de redirecionamento,
+  bloqueio de HTTP/host local/IP privado/credenciais, normalização de telefone,
+  ausência de eco de token/telefone e registro condicional no notifier.
+- Nenhum teste usa rede real: WhatsApp e SMS são exercitados por transporte
+  falso, e o lock é testado em arquivo temporário.
+
+## CI
+
+`.github/workflows/ci.yml` roda em `push`/`pull_request` para `main`:
+
+- **Qualidade** (Ubuntu, Python 3.12): `ruff format --check`, `ruff check`,
+  `mypy src`, `bandit -q -r src`, `detect-secrets` e `pip-audit`.
+- **Testes**: matriz Ubuntu/Windows × Python 3.12/3.13/3.14, com cobertura e
+  artefato `coverage.xml`. A matriz garante que o lock (`flock` no POSIX,
+  `msvcrt` no Windows) e os testes de permissão sejam exercitados no SO correto.
 
 ## Cobertura atual
 
-- 499 testes aprovados, 3 ignorados (permissões POSIX e cenários dependentes de
-  plataforma), 502 coletados, em Windows/Python 3.14.5.
-- Cobertura combinada: **89,06%** (limite mínimo configurado: 85%).
+- 579 testes coletados, 576 aprovados e 3 ignorados (permissões POSIX e cenários
+  dependentes de plataforma) em Windows/Python 3.14.5.
+- Cobertura combinada: **88,81%** (limite mínimo configurado: 85%).
 - `ruff format --check`, `ruff check` e `mypy src` sem erros.
 - `bandit -r src`: sem achados (o jitter de retry é marcado como `nosec B311`,
   pois não é usado para criptografia).
@@ -110,8 +134,10 @@ A suíte cobre apenas comportamento implementado. Ainda **não** existem, e por
 isso não são testados como se existissem:
 
 - meio de pagamento e idade do domínio no score de confiança (dados não coletados);
-- comando `monitor` contínuo;
-- SMS e WhatsApp (o WhatsApp só pode usar API oficial);
+- execução realmente contínua por horas: o teste cobre ciclos finitos; o lock e a
+  persistência são exercitados, mas não há soak test de longa duração;
+- entrega real de WhatsApp/SMS: depende de credenciais e aprovação de template do
+  provedor e por isso é simulada;
 - coleta de avaliações por scraping ou por API que não as exponha: textos
   individuais só existem quando o feed/fixture os declarar;
 - resumo de avaliações por IA: a análise atual é determinística e a IA continua

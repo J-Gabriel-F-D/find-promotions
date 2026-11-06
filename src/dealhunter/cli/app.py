@@ -26,6 +26,7 @@ from dealhunter.cli.commands import secrets as secrets_cmd
 from dealhunter.cli.commands import sources as sources_cmd
 from dealhunter.cli.commands.history import history_command
 from dealhunter.cli.commands.interactive import interactive_command
+from dealhunter.cli.commands.monitor import monitor_command
 from dealhunter.cli.commands.promotions import promotions_command
 from dealhunter.cli.commands.reviews import reviews_command
 from dealhunter.cli.commands.search import search_command
@@ -69,6 +70,9 @@ app.command("reviews", help="Agregado e análise de avaliações publicadas pela
 )
 app.command("interactive", help="REPL simples para explorar ofertas (sem shell escape).")(
     interactive_command
+)
+app.command("monitor", help="Monitora alertas continuamente (ou um ciclo com --once).")(
+    monitor_command
 )
 
 

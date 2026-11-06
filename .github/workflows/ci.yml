@@ -1,0 +1,69 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  PYTHONIOENCODING: utf-8
+  DEALHUNTER_DISABLE_KEYRING: "1"
+
+jobs:
+  quality:
+    name: Qualidade e auditorias
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Instalar dependências
+        run: python -m pip install -e ".[dev,security,secrets]"
+      - name: Formatação
+        run: ruff format --check src tests
+      - name: Lint
+        run: ruff check src tests
+      - name: Tipos
+        run: mypy src
+      - name: Bandit
+        run: bandit -q -r src
+      - name: detect-secrets
+        run: detect-secrets scan src tests --force-use-all-plugins
+      - name: pip-audit
+        run: pip-audit --skip-editable
+
+  tests:
+    name: Testes (${{ matrix.os }} / Python ${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ["3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+      - name: Instalar dependências
+        run: python -m pip install -e ".[dev,security,secrets]"
+      - name: Suíte completa com cobertura
+        run: python -m pytest --cov=dealhunter --cov-report=term-missing --cov-report=xml
+      - name: Publicar cobertura
+        if: matrix.os == 'ubuntu-latest' && matrix.python == '3.12'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage.xml
+          if-no-files-found: ignore

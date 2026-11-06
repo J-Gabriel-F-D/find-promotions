@@ -79,6 +79,24 @@ class TestConfigMasking:
         assert "segredo" not in str(masked.sources.feed_urls)
         assert "pass@" not in str(masked.sources.feed_urls)
 
+    def test_mask_config_mascara_telefones_de_whatsapp_e_sms(self) -> None:
+        config = AppConfig.model_validate(
+            {
+                "notifications": {
+                    "whatsapp_phone": "+5511999999999",
+                    "sms_to": "+5521888888888",
+                    "sms_from": "+551133334444",
+                }
+            }
+        )
+        masked = mask_config_pii(config)
+
+        assert config.notifications.whatsapp_phone == "+5511999999999"
+        assert masked.notifications.whatsapp_phone == "+**99"
+        assert masked.notifications.sms_to == "+**88"
+        assert masked.notifications.sms_from == "+**44"
+        assert "5511999999999" not in masked.model_dump_json()
+
     def test_config_show_json_mascara_pii(self, tmp_path: Path) -> None:
         home = tmp_path / "home"
         home.mkdir()

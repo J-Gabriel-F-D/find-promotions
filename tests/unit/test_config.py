@@ -88,3 +88,36 @@ def test_dump_nao_contem_none_e_roundtrip() -> None:
     text = dump_config_toml(AppConfig())
     assert "None" not in text
     assert "[general]" in text
+
+
+def test_defaults_do_monitor_e_canais_desligados(isolated_home: AppPaths) -> None:
+    config = load_config(isolated_home, environ={}).config
+
+    assert config.monitor.interval_seconds == 600
+    assert config.monitor.cooldown_minutes == 720
+    assert config.monitor.quiet_hours_start == "22:00"
+    assert config.monitor.quiet_hours_end == "07:00"
+    assert config.notifications.whatsapp_phone is None
+    assert config.notifications.sms_api_url is None
+
+
+def test_quiet_hours_normaliza_formato(isolated_home: AppPaths) -> None:
+    config = load_config(
+        isolated_home,
+        environ={
+            "DEALHUNTER_MONITOR__QUIET_HOURS_START": "7:5",
+            "DEALHUNTER_MONITOR__QUIET_HOURS_END": "23:00",
+        },
+    ).config
+
+    assert config.monitor.quiet_hours_start == "07:05"
+    assert config.monitor.quiet_hours_end == "23:00"
+
+
+def test_quiet_hours_invalido_gera_erro(isolated_home: AppPaths) -> None:
+    with pytest.raises(ConfigError) as excinfo:
+        load_config(
+            isolated_home,
+            environ={"DEALHUNTER_MONITOR__QUIET_HOURS_START": "25:00"},
+        )
+    assert "monitor.quiet_hours_start" in str(excinfo.value)

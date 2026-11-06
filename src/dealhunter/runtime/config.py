@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import urlsplit, urlunsplit
 
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from dealhunter.runtime.paths import AppPaths
@@ -56,8 +56,20 @@ class MonitorSettings(BaseModel):
     interval_seconds: int = Field(default=600, ge=60)
     quiet_hours_start: str = "22:00"
     quiet_hours_end: str = "07:00"
-    cooldown_minutes: int = Field(default=720, ge=0)
+    cooldown_minutes: int = Field(default=720, ge=0, le=10_080)
     max_active_alerts: int = Field(default=50, ge=1, le=1_000)
+
+    @field_validator("quiet_hours_start", "quiet_hours_end")
+    @classmethod
+    def _validate_hour(cls, value: str) -> str:
+        value = value.strip()
+        parts = value.split(":")
+        if len(parts) != 2 or not all(part.isdigit() for part in parts):
+            raise ValueError("horário deve estar no formato HH:MM")
+        hour, minute = int(parts[0]), int(parts[1])
+        if not (0 <= hour <= 23 and 0 <= minute <= 59):
+            raise ValueError("horário deve estar entre 00:00 e 23:59")
+        return f"{hour:02d}:{minute:02d}"
 
 
 class AISettings(BaseModel):
@@ -77,8 +89,23 @@ class NotificationSettings(BaseModel):
     smtp_user: str | None = None
     smtp_password_env: str = "DEALHUNTER_SMTP_PASSWORD"
     use_starttls: bool = True
-    whatsapp_template: str | None = None
     max_per_hour: int = Field(default=30, ge=1, le=1_000)
+
+    # WhatsApp Cloud API (Meta). O canal só é registrado quando todos os
+    # campos obrigatórios estão presentes; o token vem do cofre, nunca do TOML.
+    whatsapp_phone: str | None = None
+    whatsapp_phone_number_id: str | None = None
+    whatsapp_template: str | None = None
+    whatsapp_template_language: str = "pt_BR"
+    whatsapp_token_env: str = "DEALHUNTER_WHATSAPP_TOKEN"
+    whatsapp_api_version: str = "v20.0"
+
+    # SMS por API HTTP oficial configurável (endpoint HTTPS + token no cofre).
+    sms_api_url: str | None = None
+    sms_to: str | None = None
+    sms_from: str | None = None
+    sms_token_env: str = "DEALHUNTER_SMS_TOKEN"
+    sms_timeout_seconds: float = Field(default=20.0, gt=0, le=120)
 
 
 class SourcesSettings(BaseModel):
@@ -248,6 +275,16 @@ def _mask_account(value: str | None) -> str | None:
     return f"{masked}{separator}{domain}" if separator else masked
 
 
+def _mask_phone(value: str | None) -> str | None:
+    """Mantém apenas o DDI e os dois últimos dígitos do telefone."""
+    if not value:
+        return value
+    digits = "".join(char for char in value if char.isdigit())
+    if len(digits) <= 2:
+        return "***"
+    return f"+**{digits[-2:]}"
+
+
 def _mask_feed_url(value: str) -> str:
     """Remove credenciais, query e fragmento de URLs exibidas."""
     try:
@@ -275,6 +312,9 @@ def mask_config_pii(config: AppConfig) -> AppConfig:
             "email_from": _mask_account(config.notifications.email_from),
             "email_to": _mask_account(config.notifications.email_to),
             "smtp_user": _mask_account(config.notifications.smtp_user),
+            "whatsapp_phone": _mask_phone(config.notifications.whatsapp_phone),
+            "sms_to": _mask_phone(config.notifications.sms_to),
+            "sms_from": _mask_phone(config.notifications.sms_from),
         }
     )
     sources = config.sources.model_copy(

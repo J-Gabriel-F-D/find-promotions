@@ -34,6 +34,33 @@ def is_valid_email(address: str | None) -> bool:
     return bool(_EMAIL.fullmatch(address.strip()))
 
 
+def normalize_phone(value: str | None) -> str | None:
+    """Normaliza um telefone E.164 (``+5511999999999``) ou devolve ``None``.
+
+    Aceita separadores visuais comuns, mas nunca letras, controles ou prefixos
+    de injeção. O limite de 15 dígitos segue o padrão E.164.
+    """
+    if not value or len(value) > 32:
+        return None
+    if any(char in value for char in "\r\n\x00<>;,"):
+        return None
+    cleaned = value.strip().replace(" ", "").replace("-", "").replace("(", "").replace(")", "")
+    if cleaned.startswith("00"):
+        cleaned = f"+{cleaned[2:]}"
+    elif not cleaned.startswith("+"):
+        cleaned = f"+{cleaned}"
+    digits = cleaned[1:]
+    if not digits.isdigit() or not 8 <= len(digits) <= 15:
+        return None
+    if digits[0] == "0":
+        return None
+    return f"+{digits}"
+
+
+def is_valid_phone(value: str | None) -> bool:
+    return normalize_phone(value) is not None
+
+
 @dataclass(frozen=True, slots=True)
 class NotificationMessage:
     subject: str

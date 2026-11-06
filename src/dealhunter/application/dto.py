@@ -153,6 +153,58 @@ class OfferRow:
     confidence: float
 
 
+RiskBandName = Literal["low", "moderate", "elevated"]
+
+
+@dataclass(frozen=True, slots=True)
+class AlertRule:
+    """Filtros probabilísticos opcionais aplicados além de preço/desconto.
+
+    Todos os campos são limites de **evidência observável**, não uma
+    classificação de fraude. Regras vazias preservam o comportamento antigo.
+    """
+
+    min_trust: float | None = None
+    max_risk: RiskBandName | None = None
+    require_real_discount: bool = False
+    min_analysis_confidence: float | None = None
+
+    def __post_init__(self) -> None:
+        if self.min_trust is not None and not 0.0 <= self.min_trust <= 100.0:
+            raise ValueError("confiança mínima deve ficar entre 0 e 100")
+        if self.max_risk is not None and self.max_risk not in {
+            "low",
+            "moderate",
+            "elevated",
+        }:
+            raise ValueError("risco máximo deve ser low, moderate ou elevated")
+        if self.min_analysis_confidence is not None and not (
+            0.0 <= self.min_analysis_confidence <= 1.0
+        ):
+            raise ValueError("confiança mínima da análise deve ficar entre 0 e 1")
+
+    @property
+    def is_empty(self) -> bool:
+        return (
+            self.min_trust is None
+            and self.max_risk is None
+            and not self.require_real_discount
+            and self.min_analysis_confidence is None
+        )
+
+    def describe(self) -> list[str]:
+        parts: list[str] = []
+        if self.min_trust is not None:
+            parts.append(f"confiança >= {self.min_trust:g}/100")
+        if self.max_risk is not None:
+            parts.append(f"risco <= {self.max_risk}")
+        if self.require_real_discount:
+            parts.append("desconto corroborado")
+        if self.min_analysis_confidence is not None:
+            parts.append(f"cobertura da análise >= {self.min_analysis_confidence:.0%}")
+        return parts
+
+
 @dataclass(frozen=True, slots=True)
 class StoredAlert:
     id: int
@@ -165,6 +217,7 @@ class StoredAlert:
     active: bool
     created_at: str
     last_checked_at: str | None
+    rule: AlertRule = field(default_factory=AlertRule)
 
 
 @dataclass(frozen=True, slots=True)

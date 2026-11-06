@@ -22,6 +22,11 @@ from dealhunter.application.dto import (
 )
 from dealhunter.application.use_cases.alerts import AlertOutcome, AlertService
 from dealhunter.application.use_cases.coupons import CouponService
+from dealhunter.application.use_cases.monitor import (
+    CycleCallback,
+    MonitorRunResult,
+    MonitorService,
+)
 from dealhunter.application.use_cases.promotions import PromotionReport, PromotionService
 from dealhunter.application.use_cases.reviews import ReviewReport, ReviewService
 from dealhunter.application.use_cases.search import HistoryService, SearchService
@@ -75,9 +80,11 @@ async def open_stack(
         repository = SqliteRepository(rt.database)
         notifier, notifier_warnings = build_notifier(
             rt.config.notifications,
-            # Em modo `--json` o stdout precisa ficar limpo: o canal de console
-            # e redundante, pois o resultado ja vai no envelope.
-            printer=(lambda _text: None) if rt.json_output else rt.error_console.print,
+            # Em `--json` o stdout precisa ficar limpo (o resultado vai no
+            # envelope) e em `--quiet` o terminal não deve receber ruído.
+            printer=(
+                (lambda _text: None) if rt.json_output or rt.quiet else rt.error_console.print
+            ),
             environ=os.environ,
             secrets=secrets,
         )
@@ -127,6 +134,53 @@ def run_alerts_check(
                 max_active=rt.config.monitor.max_active_alerts,
             )
             return await service.check(alert_id)
+
+    import asyncio
+
+    return asyncio.run(_run())
+
+
+def run_monitor(
+    rt: RuntimeContext,
+    *,
+    once: bool = False,
+    interval_seconds: int | None = None,
+    cycles: int | None = None,
+    sources: list[str] | None = None,
+    ignore_quiet_hours: bool = False,
+    on_cycle: CycleCallback | None = None,
+) -> MonitorRunResult:
+    """Executa o monitor contínuo em um event loop próprio."""
+
+    async def _run() -> MonitorRunResult:
+        async with open_stack(rt, sources=sources) as stack:
+            settings = rt.config.monitor
+            service = MonitorService(
+                repository=stack.repository,
+                alerts=AlertService(
+                    repository=stack.repository,
+                    search=stack.search,
+                    notifier=stack.notifier,
+                    clock=rt.clock,
+                    max_per_hour=rt.config.notifications.max_per_hour,
+                    max_active=settings.max_active_alerts,
+                ),
+                clock=rt.clock,
+                interval_seconds=(
+                    settings.interval_seconds if interval_seconds is None else interval_seconds
+                ),
+                quiet_hours_start=settings.quiet_hours_start,
+                quiet_hours_end=settings.quiet_hours_end,
+                timezone=rt.config.general.timezone,
+                cooldown_minutes=settings.cooldown_minutes,
+            )
+            result = await service.run(
+                cycles=1 if once else cycles,
+                trigger="once" if once else "monitor",
+                ignore_quiet_hours=ignore_quiet_hours,
+                on_cycle=on_cycle,
+            )
+            return replace(result, warnings=tuple(stack.warnings))
 
     import asyncio
 

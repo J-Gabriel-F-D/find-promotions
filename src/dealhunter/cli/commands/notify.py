@@ -46,7 +46,7 @@ def status(ctx: typer.Context) -> None:
     table = Table(box=box.SIMPLE_HEAD, show_edge=False)
     table.add_column("Canal", style="bold")
     table.add_column("Status")
-    for channel in ("console", "email"):
+    for channel in ("console", "email", "whatsapp", "sms"):
         available = notifier.supports(channel)
         table.add_row(
             channel,
@@ -60,6 +60,17 @@ def status(ctx: typer.Context) -> None:
         rt.console.print(
             "[dim]Para e-mail: configure [notifications] smtp_host, email_from e email_to, "
             "e defina DEALHUNTER_SMTP_PASSWORD ou use 'dealhunter secrets set'.[/dim]"
+        )
+    if not notifier.supports("whatsapp"):
+        rt.console.print(
+            "[dim]Para WhatsApp: configure whatsapp_phone, whatsapp_phone_number_id e "
+            "whatsapp_template (API oficial Meta); o token vem de "
+            "DEALHUNTER_WHATSAPP_TOKEN ou do keyring.[/dim]"
+        )
+    if not notifier.supports("sms"):
+        rt.console.print(
+            "[dim]Para SMS: configure sms_api_url (HTTPS oficial) e sms_to; o token vem de "
+            "DEALHUNTER_SMS_TOKEN ou do keyring.[/dim]"
         )
 
 

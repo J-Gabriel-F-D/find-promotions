@@ -10,7 +10,7 @@ from rich.markup import escape
 from rich.table import Table
 
 from dealhunter.adapters.storage.repository import SqliteRepository
-from dealhunter.application.dto import QuerySpec
+from dealhunter.application.dto import AlertRule, QuerySpec
 from dealhunter.application.intent import parse_query
 from dealhunter.application.use_cases.alerts import create_alert
 from dealhunter.cli.exit_codes import ExitCode
@@ -22,7 +22,11 @@ from dealhunter.runtime.container import RuntimeContext
 app = typer.Typer(help="Cria e gerencia alertas de preço.", no_args_is_help=True)
 
 
-def _rule_text(max_price_cents: int | None, min_discount_pct: float | None) -> str:
+def _rule_text(
+    max_price_cents: int | None,
+    min_discount_pct: float | None,
+    rule: AlertRule | None = None,
+) -> str:
     from dealhunter.domain.value_objects.money import Money
 
     parts = []
@@ -30,7 +34,11 @@ def _rule_text(max_price_cents: int | None, min_discount_pct: float | None) -> s
         parts.append(f"<= {Money(max_price_cents)}")
     if min_discount_pct is not None:
         parts.append(f">= {min_discount_pct:g}% desconto")
-    return " ou ".join(parts)
+    base = " ou ".join(parts)
+    if rule is not None and not rule.is_empty:
+        filters = ", ".join(rule.describe())
+        return f"{base} e {filters}" if base else filters
+    return base
 
 
 @app.command("create")
@@ -46,6 +54,30 @@ def create(
         list[str] | None, typer.Option("--channel", help="Canal (repetivel). Padrão: config.")
     ] = None,
     label: Annotated[str | None, typer.Option("--label", help="Nome do alerta.")] = None,
+    min_trust: Annotated[
+        float | None,
+        typer.Option("--min-trust", min=0, max=100, help="Confiança mínima (0-100)."),
+    ] = None,
+    max_risk: Annotated[
+        str | None,
+        typer.Option("--max-risk", help="Risco máximo aceito: low, moderate ou elevated."),
+    ] = None,
+    require_real_discount: Annotated[
+        bool,
+        typer.Option(
+            "--require-real-discount",
+            help="Exige desconto corroborado pelo histórico (likely_real).",
+        ),
+    ] = False,
+    min_analysis_confidence: Annotated[
+        float | None,
+        typer.Option(
+            "--min-analysis-confidence",
+            min=0,
+            max=1,
+            help="Cobertura mínima da análise de confiança (0-1).",
+        ),
+    ] = None,
 ) -> None:
     """Cria um alerta de preço."""
     rt: RuntimeContext = ctx.obj
@@ -64,6 +96,16 @@ def create(
     channels = channel or list(rt.config.notifications.channels)
 
     try:
+        rule = AlertRule(
+            min_trust=min_trust,
+            max_risk=max_risk,  # type: ignore[arg-type]
+            require_real_discount=require_real_discount,
+            min_analysis_confidence=min_analysis_confidence,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+    try:
         alert_id = create_alert(
             SqliteRepository(rt.database),
             query=query or product or "",
@@ -74,6 +116,7 @@ def create(
             label=label,
             now=rt.clock.now(),
             max_active=rt.config.monitor.max_active_alerts,
+            rule=rule,
         )
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc
@@ -84,14 +127,15 @@ def create(
                 "alerts.create",
                 generated_at=rt.clock.now().isoformat(),
                 alert_id=alert_id,
-                rule=_rule_text(max_price_cents, min_discount),
+                rule=_rule_text(max_price_cents, min_discount, rule),
                 channels=channels,
+                smart_rule=rule.describe(),
             )
         )
         return
 
     rt.console.print(f"[green]Alerta #{alert_id} criado.[/green]")
-    rt.console.print(f"Regra: {_rule_text(max_price_cents, min_discount)}")
+    rt.console.print(f"Regra: {_rule_text(max_price_cents, min_discount, rule)}")
     rt.console.print(f"Canais: {', '.join(channels)}")
     rt.console.print(f"Verifique com: [bold]dealhunter alerts check {alert_id}[/bold]")
 
@@ -113,7 +157,10 @@ def list_alerts(ctx: typer.Context) -> None:
                         "id": alert.id,
                         "label": alert.label,
                         "query": alert.query,
-                        "rule": _rule_text(alert.max_price_cents, alert.min_discount_pct),
+                        "rule": _rule_text(
+                            alert.max_price_cents, alert.min_discount_pct, alert.rule
+                        ),
+                        "smart_rule": alert.rule.describe(),
                         "channels": list(alert.channels),
                         "active": alert.active,
                         "created_at": alert.created_at,
@@ -140,7 +187,7 @@ def list_alerts(ctx: typer.Context) -> None:
         table.add_row(
             str(alert.id),
             escape(alert.label),
-            _rule_text(alert.max_price_cents, alert.min_discount_pct),
+            _rule_text(alert.max_price_cents, alert.min_discount_pct, alert.rule),
             status,
             alert.last_checked_at or "-",
         )
@@ -230,6 +277,15 @@ def check(
                         "matched": outcome.matched,
                         "offer_id": outcome.offer_id,
                         "price_cents": outcome.price.cents if outcome.price else None,
+                        "trust_score": outcome.trust_score,
+                        "risk_band": outcome.risk_band,
+                        "analysis_confidence": outcome.analysis_confidence,
+                        "discount_classification": outcome.discount_classification,
+                        "source": outcome.source,
+                        "source_url": outcome.source_url,
+                        "offer_url": outcome.offer_url,
+                        "collected_at": outcome.collected_at,
+                        "confidence": outcome.confidence,
                         "channels": [
                             {"channel": channel, "ok": ok, "error": error}
                             for channel, ok, error in outcome.channels_sent
@@ -256,6 +312,11 @@ def check(
             f"[bold green]#{outcome.alert_id}[/bold green] {escape(outcome.label)}: "
             f"{outcome.price} — {escape(outcome.note)}"
         )
+        if outcome.trust_score is not None:
+            rt.console.print(
+                f"  confiança {outcome.trust_score:.0f}/100; risco {outcome.risk_band}; "
+                f"cobertura {outcome.analysis_confidence:.0%}"
+            )
         for channel, ok, error in outcome.channels_sent:
             mark = "[green]ok[/green]" if ok else f"[red]falhou ({escape(error or '')})[/red]"
             rt.console.print(f"  {escape(channel)}: {mark}")

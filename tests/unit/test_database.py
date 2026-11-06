@@ -16,7 +16,8 @@ def test_migrate_cria_schema(tmp_path: Path) -> None:
     assert "0002_mvp" in result.applied
     assert "0004_privacidade" in result.applied
     assert "0005_reviews" in result.applied
-    assert database.schema_version() == "0005_reviews"
+    assert "0006_fase4" in result.applied
+    assert database.schema_version() == "0006_fase4"
     assert database.integrity_check() is True
 
 
@@ -38,6 +39,9 @@ def test_tabela_de_auditoria_existe(tmp_path: Path) -> None:
     assert "audit_log" in tables
     assert "schema_migration" in tables
     assert "alert_dedupe" in tables
+    assert "monitor_run" in tables
+    assert "monitor_state" in tables
+    assert "alert_rule" in tables
 
 
 def test_pragmas_aplicados(tmp_path: Path) -> None:

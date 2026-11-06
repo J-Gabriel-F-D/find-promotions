@@ -85,6 +85,8 @@ Invariantes:
 * `alert_event.dedupe_key` é `UNIQUE` — impede notificação duplicada.
 
 Fase 0 cria apenas `schema_migration` e `audit_log` (migração `0001_init`).
+A Fase 4 acrescenta `monitor_run`, `monitor_state` e `alert_rule` (migração
+`0006_fase4`); nenhuma coluna de `alert` é alterada.
 
 ## 6. Identidade de produto
 
@@ -210,16 +212,23 @@ quando ≥40% dos itens vêm sem preço.
 
 ## 11. Jobs e notificações
 
-Scheduler asyncio in-process + tabela `job`. Sem Redis.
+Scheduler asyncio in-process. Sem Redis, sem fila externa.
 
-* `monitor` — TUI ao vivo no terminal.
-* `monitor --once` — um ciclo (cron).
-* `monitor --daemon` — PID file + lock exclusivo (systemd/launchd/Task Scheduler).
+* `monitor --once` — um ciclo (cron/Task Scheduler/systemd timer).
+* `monitor --cycles N --interval S` — execução finita, útil para batches.
+* `monitor` — ciclos contínuos até interrupção, com lock exclusivo mantido aberto.
+
+O monitor reutiliza `AlertService.check`; não duplica regras, dedupe nem outbox.
+`monitor_run` registra cada sessão e `monitor_state` guarda o último estado.
+Quiet hours usam `general.timezone`; cooldown é por alerta e consulta
+`alert_event` desde o corte configurado.
 
 Notificações em **outbox**: persiste → tenta enviar → atualiza status com retry.
-Canais: console, SMTP/Resend, WhatsApp Cloud API (Meta) ou Twilio, SMS Twilio.
-Opt-in por canal, quiet hours no fuso do usuário, dedupe por
-`hash(alert_id, offer_id, faixa_de_preço, cupom)`.
+Canais: console, SMTP, **WhatsApp Cloud API (Meta, template obrigatório)** e
+**SMS por endpoint HTTPS oficial configurável**. Opt-in por canal, quiet hours no
+fuso do usuário, dedupe por `hash(alert_id, offer_id, faixa_de_preço, cupom)`.
+WhatsApp e SMS ficam desligados sem configuração completa; tokens vêm do ambiente
+ou keyring, nunca do TOML.
 
 ## 12. IA
 
@@ -309,7 +318,7 @@ Desvios conscientes em relação ao desenho original:
    é 100% determinístico; o caminho de IA fica para a Fase 3 (resumo de
    avaliações/reclamações), com schema + guard numérico já previstos.
 5. **`interactive` adiado para a Fase 3 e `monitor` para a Fase 4**, conforme
-   roadmap. O `interactive` foi entregue na Fase 3.
+   roadmap. Ambos foram entregues nas fases correspondentes.
 
 ### Fase 2 — concluída
 
@@ -353,6 +362,37 @@ Desvios conscientes da Fase 2:
 Limitações mantidas: meio de pagamento e idade do domínio não são coletados;
 não há teto rígido baseado neles. Avaliações individuais dependem de feed/fixture
 e a análise não prova fraude nem representa toda a base de clientes.
+
+### Fase 4 — concluída
+
+| Área | Implementado |
+|---|---|
+| Monitor | `MonitorService` com ciclos, `--once`, `--cycles`, intervalo, quiet hours, cooldown por alerta, callback de ciclo e erros isolados |
+| Estado | migração `0006_fase4`: `monitor_run`, `monitor_state`; `monitor --json` expõe `previous_run`, ciclos e totais |
+| Lock | `adapters/storage/lock.py` com `flock` (POSIX) / `msvcrt.locking` (Windows), não bloqueante, liberado em `finally` |
+| Alertas inteligentes | `alert_rule` opcional: `min_trust`, `max_risk`, `require_real_discount`, `min_analysis_confidence`; filtros aplicados sobre `trust` |
+| WhatsApp | `adapters/notify/whatsapp.py` pela Meta Cloud API, template obrigatório, `follow_redirects=False`, token nunca ecoado |
+| SMS | `adapters/notify/sms.py` por endpoint HTTPS oficial, payload JSON mínimo, bloqueio de hosts locais/IP privado/credenciais/fragmento |
+| Notificações | `notify status` lista console/e-mail/WhatsApp/SMS; canais só entram com configuração completa |
+| CLI | `monitor` com `--json`/`--quiet`, validação de fonte, exit code 1 para lock/erro e 2 para uso inválido |
+| CI | GitHub Actions em Ubuntu/Windows × Python 3.12/3.13/3.14 + lint, mypy, bandit, detect-secrets e pip-audit |
+
+Decisões e limites da Fase 4:
+
+1. **`monitor` não reimplementa alertas.** Ele orquestra `AlertService.check` e
+   apenas pula alertas em cooldown; regras, dedupe e outbox continuam em um só lugar.
+2. **Cooldown é por alerta, não por oferta.** Dois alertas distintos podem
+   notificar a mesma oferta; o dedupe por faixa de preço continua evitando repetição
+   do mesmo alerta.
+3. **`insufficient_data` não é risco baixo.** `--max-risk` só aceita uma faixa
+   observável; sem dados, o alerta não casa com a regra conservadora.
+4. **Canais externos são opt-in e oficiais.** WhatsApp exige template aprovado;
+   SMS exige endpoint HTTPS de provedor oficial. Não há automação de app, modem
+   ou gateway não documentado.
+5. **`--json` exige execução finita.** `--once` ou `--cycles`; sem isso, não há
+   documento final para o envelope.
+6. **CI usa matriz real.** Linux valida permissões POSIX e o lock `flock`;
+   Windows valida `msvcrt`, caminhos e `tzdata`.
 
 ### Dados de demonstração
 

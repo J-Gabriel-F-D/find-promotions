@@ -9,15 +9,16 @@ duas vezes.
 from __future__ import annotations
 
 import re
+from collections.abc import Collection
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 from dealhunter.adapters.notify.base import NotificationMessage, Notifier
 from dealhunter.adapters.storage.repository import SqliteRepository, iso
-from dealhunter.application.dto import QuerySpec, StoredAlert
+from dealhunter.application.dto import AlertRule, QuerySpec, StoredAlert
 from dealhunter.application.use_cases.search import SearchService
 from dealhunter.domain.ids import stable_id
-from dealhunter.domain.models import OfferView
+from dealhunter.domain.models import TRUST_DISCLAIMER, OfferView
 from dealhunter.domain.ports.clock import Clock
 from dealhunter.domain.value_objects.money import Money
 
@@ -26,9 +27,10 @@ MAX_ACTIVE_ALERTS = 50
 MAX_CHANNELS_PER_ALERT = 5
 MAX_LABEL_CHARS = 200
 MAX_QUERY_CHARS = 500
-_ALLOWED_CHANNELS = {"console", "email"}
+_ALLOWED_CHANNELS = {"console", "email", "whatsapp", "sms"}
 _CHANNEL = re.compile(r"^[a-z][a-z0-9_-]{0,30}$")
 _CONTROL = re.compile(r"[\x00-\x1f\x7f]")
+_RISK_ORDER = {"low": 0, "moderate": 1, "elevated": 2}
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,6 +42,16 @@ class AlertOutcome:
     price: Money | None = None
     channels_sent: tuple[tuple[str, bool, str | None], ...] = ()
     note: str = ""
+    trust_score: float | None = None
+    risk_band: str | None = None
+    analysis_confidence: float | None = None
+    discount_classification: str | None = None
+    # Procedência da oferta: todo fato numérico precisa ser rastreável.
+    source: str | None = None
+    source_url: str | None = None
+    offer_url: str | None = None
+    collected_at: str | None = None
+    confidence: float | None = None
 
 
 def create_alert(
@@ -53,6 +65,7 @@ def create_alert(
     label: str | None,
     now: datetime,
     max_active: int = MAX_ACTIVE_ALERTS,
+    rule: AlertRule | None = None,
 ) -> int:
     """Cria um alerta; exige ao menos uma regra (preço ou desconto)."""
     if max_price_cents is None and min_discount_pct is None:
@@ -65,6 +78,8 @@ def create_alert(
         raise ValueError("um alerta precisa de ao menos um canal de notificação")
     if len(channels) > MAX_CHANNELS_PER_ALERT:
         raise ValueError(f"um alerta aceita no máximo {MAX_CHANNELS_PER_ALERT} canais")
+    if rule is not None and rule.is_empty:
+        rule = None
 
     normalized_channels: list[str] = []
     for channel in channels:
@@ -93,6 +108,7 @@ def create_alert(
         min_discount_pct=min_discount_pct,
         channels=normalized_channels,
         now=now,
+        rule=rule,
     )
 
 
@@ -123,6 +139,7 @@ class AlertService:
         min_discount_pct: float | None,
         channels: list[str],
         label: str | None = None,
+        rule: AlertRule | None = None,
     ) -> int:
         return create_alert(
             self._repo,
@@ -134,9 +151,15 @@ class AlertService:
             label=label,
             now=self._clock.now(),
             max_active=self._max_active,
+            rule=rule,
         )
 
-    async def check(self, alert_id: int | None = None) -> list[AlertOutcome]:
+    async def check(
+        self,
+        alert_id: int | None = None,
+        *,
+        skip_alert_ids: Collection[int] | None = None,
+    ) -> list[AlertOutcome]:
         alerts = self._repo.list_alerts(only_active=True)
         if alert_id is not None:
             alerts = [alert for alert in alerts if alert.id == alert_id]
@@ -149,6 +172,9 @@ class AlertService:
                         note="alerta não encontrado ou pausado",
                     )
                 ]
+        if skip_alert_ids:
+            skipped = set(skip_alert_ids)
+            alerts = [alert for alert in alerts if alert.id not in skipped]
 
         outcomes: list[AlertOutcome] = []
         for alert in alerts:
@@ -185,7 +211,9 @@ class AlertService:
             dedupe_key=dedupe_key,
             now=self._clock.now(),
         )
+        source, source_url, offer_url, collected_at, confidence = _offer_fields(best)
         if event_id is None:
+            trust_score, risk_band, analysis_confidence, discount = _trust_fields(best)
             return AlertOutcome(
                 alert_id=alert.id,
                 label=alert.label,
@@ -193,9 +221,19 @@ class AlertService:
                 offer_id=best.offer.id,
                 price=best.offer.final_price,
                 note="já notificado para esta faixa de preço",
+                trust_score=trust_score,
+                risk_band=risk_band,
+                analysis_confidence=analysis_confidence,
+                discount_classification=discount,
+                source=source,
+                source_url=source_url,
+                offer_url=offer_url,
+                collected_at=collected_at,
+                confidence=confidence,
             )
 
         sent = await self._dispatch(alert, event_id, best, reason)
+        trust_score, risk_band, analysis_confidence, discount = _trust_fields(best)
         return AlertOutcome(
             alert_id=alert.id,
             label=alert.label,
@@ -204,6 +242,15 @@ class AlertService:
             price=best.offer.final_price,
             channels_sent=tuple(sent),
             note=reason,
+            trust_score=trust_score,
+            risk_band=risk_band,
+            analysis_confidence=analysis_confidence,
+            discount_classification=discount,
+            source=source,
+            source_url=source_url,
+            offer_url=offer_url,
+            collected_at=collected_at,
+            confidence=confidence,
         )
 
     async def _dispatch(
@@ -241,17 +288,75 @@ class AlertService:
         return results
 
 
+def _offer_fields(view: OfferView) -> tuple[str, str, str, str | None, float]:
+    offer = view.offer
+    return (
+        offer.source,
+        offer.source_url,
+        offer.url,
+        offer.collected_at.isoformat() if offer.collected_at else None,
+        offer.confidence,
+    )
+
+
+def _trust_fields(view: OfferView) -> tuple[float | None, str | None, float | None, str]:
+    trust = view.trust
+    return (
+        round(trust.score, 1) if trust else None,
+        trust.risk_band if trust else None,
+        round(trust.analysis_confidence, 3) if trust else None,
+        view.discount.classification,
+    )
+
+
 def _matches(alert: StoredAlert, view: OfferView) -> tuple[bool, str]:
+    base: list[str] = []
     if alert.max_price_cents is not None and view.offer.final_price.cents <= alert.max_price_cents:
         target = Money(alert.max_price_cents, view.offer.final_price.currency)
-        return True, f"preço final {view.offer.final_price} atingiu a meta {target}"
+        base.append(f"preço final {view.offer.final_price} atingiu a meta {target}")
 
     if alert.min_discount_pct is not None and view.stats and view.stats.sufficient_history:
         percentage = view.stats.discount_vs_average()
         if percentage >= alert.min_discount_pct:
-            return True, f"{percentage}% abaixo da média histórica {view.stats.average}"
+            base.append(f"{percentage}% abaixo da média histórica {view.stats.average}")
 
-    return False, ""
+    if not base:
+        return False, ""
+
+    rule = alert.rule
+    if rule.is_empty:
+        return True, " ou ".join(base)
+
+    trust = view.trust
+    if trust is None:
+        return False, ""
+
+    gates: list[str] = []
+    if rule.min_trust is not None:
+        if trust.score < rule.min_trust:
+            return False, ""
+        gates.append(f"confiança {trust.score:.0f}/100 >= {rule.min_trust:g}")
+    if rule.max_risk is not None:
+        # "Sem dados" não é o mesmo que risco baixo: a regra conservadora exige
+        # uma faixa observável em vez de presumir segurança.
+        if trust.risk_band == "insufficient_data" or (
+            _RISK_ORDER[trust.risk_band] > _RISK_ORDER[rule.max_risk]
+        ):
+            return False, ""
+        gates.append(f"risco observado {trust.risk_band} <= {rule.max_risk}")
+    if rule.require_real_discount:
+        if view.discount.classification != "likely_real":
+            return False, ""
+        gates.append("desconto corroborado pelo histórico")
+    if rule.min_analysis_confidence is not None:
+        if trust.analysis_confidence < rule.min_analysis_confidence:
+            return False, ""
+        gates.append(
+            f"cobertura da análise {trust.analysis_confidence:.0%} "
+            f">= {rule.min_analysis_confidence:.0%}"
+        )
+
+    return True, " ou ".join(base) + " | " + "; ".join(gates)
 
 
 def build_message(alert: StoredAlert, view: OfferView, reason: str) -> NotificationMessage:
@@ -278,9 +383,18 @@ def build_message(alert: StoredAlert, view: OfferView, reason: str) -> Notificat
         lines.append(f"Vendedor: {view.seller.name}")
     if offer.coupon_code:
         lines.append(f"Cupom: {offer.coupon_code} (não validado)")
+    lines.append(f"Oportunidade (preço/frete/histórico): {view.deal_score:.0f}/100")
+    if view.trust:
+        lines += [
+            f"Confiabilidade (probabilística): {view.trust.score:.0f}/100; "
+            f"risco: {view.trust.risk_band}; "
+            f"cobertura da análise: {view.trust.analysis_confidence:.0%}",
+            f"Desconto: {view.discount.classification} ({view.discount.evidence})",
+            TRUST_DISCLAIMER,
+        ]
+    else:
+        lines.append("Confiabilidade: não avaliada para esta oferta")
     lines += [
-        f"Oportunidade (preço/frete/histórico): {view.deal_score:.0f}/100",
-        "Confiabilidade: não avaliada nesta fase (análise antifraude na Fase 3)",
         f"Regra atendida: {reason}",
         f"Link: {offer.url}",
         f"Verificado em: {offer.collected_at.isoformat() if offer.collected_at else 'agora'}",
