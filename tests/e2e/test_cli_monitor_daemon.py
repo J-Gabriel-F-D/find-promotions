@@ -24,6 +24,11 @@ from dealhunter.runtime.process import (
 runner = CliRunner()
 
 
+def _flat(text: str) -> str:
+    """Compara ignorando quebras de linha/ANSI de painéis Rich."""
+    return "".join(text.split()).lower()
+
+
 def _invoke(tmp_path: Path, args: list[str]):
     return runner.invoke(app, args, env={"DEALHUNTER_HOME": str(tmp_path / "home")})
 
@@ -59,19 +64,19 @@ class TestDaemonContract:
         result = _invoke(tmp_path, ["monitor", "--daemon", "--stop"])
 
         assert result.exit_code == 2
-        assert "não os dois" in result.output
+        assert _flat("não os dois") in _flat(result.output)
 
     def test_daemon_nao_combina_com_once(self, tmp_path: Path) -> None:
         result = _invoke(tmp_path, ["monitor", "--daemon", "--once"])
 
         assert result.exit_code == 2
-        assert "--once" in result.output
+        assert "--once" in _flat(result.output)
 
     def test_stop_nao_aceita_opcoes_de_execucao(self, tmp_path: Path) -> None:
         result = _invoke(tmp_path, ["monitor", "--stop", "--interval", "5"])
 
         assert result.exit_code == 2
-        assert "--stop" in result.output
+        assert "--stop" in _flat(result.output)
 
     def test_stop_sem_monitor_e_idempotente(self, tmp_path: Path) -> None:
         result = _invoke(tmp_path, ["--json", "monitor", "--stop"])

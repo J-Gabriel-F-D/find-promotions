@@ -174,7 +174,8 @@ class TestMonitorContract:
     def test_json_exige_execucao_finita(self, tmp_path: Path) -> None:
         result = _invoke(tmp_path, ["--json", "monitor", "--source", "fixture"])
         assert result.exit_code == 2
-        assert "--once" in result.output or "--cycles" in result.output
+        flat = "".join(result.output.split())
+        assert "--once" in flat or "--cycles" in flat
 
     def test_once_e_cycles_sao_exclusivos(self, tmp_path: Path) -> None:
         result = _invoke(tmp_path, ["monitor", "--once", "--cycles", "2", "--source", "fixture"])

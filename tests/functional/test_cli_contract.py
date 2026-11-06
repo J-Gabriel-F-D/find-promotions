@@ -52,6 +52,11 @@ class TestGlobalContract:
         assert result.exit_code == 6
 
 
+def _flat(text: str) -> str:
+    """Compara ignorando quebras de linha/ANSI de painéis Rich."""
+    return "".join(text.split()).lower()
+
+
 class TestSearchArguments:
     def test_busca_sem_termo_e_uso_invalido(self, tmp_path: Path) -> None:
         result = _invoke(tmp_path, ["search"])
@@ -71,7 +76,7 @@ class TestSearchArguments:
     def test_argumentos_invalidos(self, tmp_path: Path, args: list[str], fragment: str) -> None:
         result = _invoke(tmp_path, ["search", "redmi", "--source", "fixture", *args])
         assert result.exit_code == 2
-        assert fragment.lower() in result.output.lower()
+        assert _flat(fragment) in _flat(result.output)
 
     def test_sem_resultados_exit_3(self, tmp_path: Path) -> None:
         result = _invoke(
