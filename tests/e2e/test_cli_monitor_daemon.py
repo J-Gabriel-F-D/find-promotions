@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -24,9 +25,12 @@ from dealhunter.runtime.process import (
 runner = CliRunner()
 
 
+_ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
+
+
 def _flat(text: str) -> str:
-    """Compara ignorando quebras de linha/ANSI de painéis Rich."""
-    return "".join(text.split()).lower()
+    """Compara ignorando ANSI, quebras de linha e espaços de painéis Rich."""
+    return "".join(_ANSI_RE.sub("", text).split()).lower()
 
 
 def _invoke(tmp_path: Path, args: list[str]):

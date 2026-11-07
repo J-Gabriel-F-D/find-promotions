@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -13,6 +14,13 @@ from dealhunter.cli.app import app
 from dealhunter.runtime.paths import resolve_paths
 
 runner = CliRunner()
+
+_ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
+
+
+def _flat(text: str) -> str:
+    """Compara ignorando ANSI, quebras de linha e espaços de painéis Rich."""
+    return "".join(_ANSI_RE.sub("", text).split()).lower()
 
 
 def _home(tmp_path: Path) -> Path:
@@ -174,8 +182,7 @@ class TestMonitorContract:
     def test_json_exige_execucao_finita(self, tmp_path: Path) -> None:
         result = _invoke(tmp_path, ["--json", "monitor", "--source", "fixture"])
         assert result.exit_code == 2
-        flat = "".join(result.output.split())
-        assert "--once" in flat or "--cycles" in flat
+        assert "--once" in _flat(result.output) or "--cycles" in _flat(result.output)
 
     def test_once_e_cycles_sao_exclusivos(self, tmp_path: Path) -> None:
         result = _invoke(tmp_path, ["monitor", "--once", "--cycles", "2", "--source", "fixture"])

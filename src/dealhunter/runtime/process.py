@@ -11,6 +11,7 @@ from __future__ import annotations
 import ctypes
 import os
 import signal
+import sys
 from contextlib import suppress
 from pathlib import Path
 from typing import Any, cast
@@ -67,6 +68,35 @@ def clear_pid(path: Path, *, expected_pid: int | None = None) -> bool:
     return True
 
 
+def _stat_is_zombie(stat: str) -> bool:
+    """Interpreta o estado em ``/proc/<pid>/stat``.
+
+    O nome do comando pode conter parênteses e espaços, então o estado é o
+    primeiro campo após o último ``)``.
+    """
+    end = stat.rfind(")")
+    if end < 0:
+        return False
+    return stat[end + 1 :].lstrip().startswith("Z")
+
+
+def _linux_process_is_zombie(pid: int) -> bool:
+    """No Linux, processo zumbi ainda responde a ``kill(pid, 0)``.
+
+    Zumbi já terminou e não executa mais nada; contá-lo como vivo faria
+    ``monitor --stop``/``monitor --daemon`` esperarem por um processo que nunca
+    vai encerrar. Em outros SOs não há ``/proc`` e mantemos o comportamento
+    baseado em sinal.
+    """
+    if not sys.platform.startswith("linux"):
+        return False
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_text(encoding="ascii", errors="replace")
+    except OSError:
+        return False
+    return _stat_is_zombie(stat)
+
+
 def pid_running(pid: int) -> bool:
     """Diz se o processo existe, sem enviar sinal destrutivo."""
     if pid <= 0:
@@ -92,7 +122,7 @@ def pid_running(pid: int) -> bool:
         return True
     except OSError:
         return False
-    return True
+    return not _linux_process_is_zombie(pid)
 
 
 def terminate_pid(pid: int) -> bool:
