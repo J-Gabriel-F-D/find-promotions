@@ -100,6 +100,11 @@ Os marcadores são aplicados automaticamente pelo diretório em
 - `interactive` cobre `help`, EOF, `search`, `reviews`, `history`, `promotions`,
   comandos desconhecidos (incluindo tentativa de shell) e rejeição de
   `--json`/`--quiet`.
+- A UI Tkinter é testada **headless**, sem importar Tkinter nem abrir janela:
+  `tests/unit/test_gui_controller.py` exercita busca, histórico, avaliações,
+  alertas (criar/listar/pausar/excluir/verificar), monitor `--once` e `open_url`;
+  `tests/functional/test_cli_ui.py` cobre `ui --help` sem Tkinter, ausência de
+  Tkinter/display e rejeição de `--json`. Nenhum teste exige servidor gráfico.
 - `monitor` cobre `--once`, `--cycles`, intervalo, callback, quiet hours que
   cruzam a meia-noite, janela diurna desativada, cooldown por alerta, erros
   isolados, estado persistido, execuções órfãs, lock, `--json` finito, `--quiet`,

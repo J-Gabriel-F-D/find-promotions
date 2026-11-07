@@ -31,6 +31,7 @@ from dealhunter.cli.commands.promotions import promotions_command
 from dealhunter.cli.commands.reviews import reviews_command
 from dealhunter.cli.commands.search import search_command
 from dealhunter.cli.commands.status import status_command
+from dealhunter.cli.commands.ui import ui_command
 from dealhunter.cli.exit_codes import ExitCode
 from dealhunter.runtime.config import ConfigError
 from dealhunter.runtime.container import RuntimeFlags, build_runtime
@@ -74,6 +75,7 @@ app.command("interactive", help="REPL simples para explorar ofertas (sem shell e
 app.command("monitor", help="Monitora alertas continuamente (ou um ciclo com --once).")(
     monitor_command
 )
+app.command("ui", help="Abre a interface gráfica opcional (Tkinter).")(ui_command)
 
 
 def _print_version() -> None:

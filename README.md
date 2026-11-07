@@ -389,6 +389,26 @@ Comandos: `search`, `reviews`, `history`, `promotions`, `help` e `sair`. É um R
 não há escape para shell, `eval` ou execução de programas do sistema. `--json` e `--quiet`
 são recusados nesse modo; use os comandos individuais para automação.
 
+### Interface gráfica (opcional)
+
+```bash
+dealhunter ui
+```
+
+Abre uma janela Tkinter (biblioteca padrão, sem dependência nova) com abas de **Busca**,
+**Histórico**, **Avaliações**, **Alertas** e **Monitor**. A janela é apenas apresentação: ela
+chama os mesmos casos de uso da CLI, sem duplicar regra de negócio, e todo dado exibido vem
+das fontes/casos de uso. A confiança continua probabilística, separada do `deal_score`, e a
+UI não afirma fraude.
+
+- Tkinter precisa existir no Python e haver um display. Sem isso, `dealhunter ui` sai com
+  código 1 e mensagem clara; os demais comandos continuam funcionando.
+- `--json` é recusado (código 2): a UI não gera saída para automação.
+- Operações de rede rodam em uma thread e devolvem o resultado à thread principal, então a
+  janela não trava durante a busca.
+- O monitor contínuo permanece na CLI. A janela executa um ciclo (`--once`) e mostra a última
+  execução registrada; para execução permanente use `dealhunter monitor --daemon`.
+
 ### Fontes
 
 ```bash
@@ -762,6 +782,7 @@ Arquitetura hexagonal: `cli → application → domain ← adapters`.
 ```
 src/dealhunter/
 ├─ cli/            # Typer + Rich: comandos (incl. monitor), render, ui, wiring
+├─ gui/            # janela Tkinter opcional: app, controller, format, erros
 ├─ domain/         # modelos, value objects, portas (clock), ids
 ├─ application/    # casos de uso (search, alerts, monitor, coupons, promotions, reviews), DTOs, intent
 ├─ adapters/       # http (SSRF/robots), sources, storage (lock), notify (console/smtp/whatsapp/sms)

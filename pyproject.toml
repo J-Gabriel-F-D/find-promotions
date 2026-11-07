@@ -73,7 +73,10 @@ markers = [
 [tool.coverage.run]
 source = ["dealhunter"]
 branch = true
-omit = ["*/data/*"]
+# `gui/app.py` é a montagem dos widgets Tkinter: exige display e não tem regra
+# de negócio. A lógica por trás dela é coberta por gui/controller.py e
+# gui/format.py em testes headless.
+omit = ["*/data/*", "*/gui/app.py"]
 
 [tool.coverage.report]
 show_missing = true

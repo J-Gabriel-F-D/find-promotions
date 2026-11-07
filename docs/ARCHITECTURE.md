@@ -28,7 +28,7 @@ custo zero de infraestrutura · IA opcional.
 ## 3. Camadas
 
 ```
-CLI (Typer/Rich)
+CLI (Typer/Rich)  +  GUI opcional (Tkinter)
   └── Application (casos de uso, DTOs, orquestradores)
         └── Domain (modelos, value objects, políticas puras, portas)
               ▲
@@ -36,6 +36,8 @@ CLI (Typer/Rich)
 ```
 
 Regra de dependência: `cli → application → domain`; `adapters → domain`.
+A GUI opcional também só depende de `application`/`cli.wiring`, nunca de regra
+de negócio própria.
 O domínio não importa nada de fora.
 
 **Fluxo de busca**
@@ -434,6 +436,30 @@ Decisões e limites da Fase 4:
 9. **Entrega real e soak são opt-in.** `DEALHUNTER_LIVE_NOTIFY=1` e
    `DEALHUNTER_SOAK=1` habilitam testes que gastam dinheiro/tempo e por isso não
    entram no CI padrão.
+
+### Interface gráfica opcional (Tkinter)
+
+`dealhunter ui` abre uma janela desktop com abas de busca, histórico, avaliações,
+alertas e monitor. Decisões:
+
+1. **Tkinter é da biblioteca padrão.** Nenhuma dependência nova entra no produto;
+   a UI é opcional e a CLI continua sendo o caminho de automação.
+2. **A janela não tem regra de negócio.** `gui/controller.py` valida entrada e
+   chama `run_search`, `run_history`, `run_reviews`, `run_alerts_check`,
+   `run_monitor`, `create_alert` e o repositório, os mesmos usados pela CLI.
+   `gui/format.py` só formata fatos devolvidos pelos casos de uso.
+3. **Import preguiçoso.** O comando `ui` importa `gui.app` apenas na execução;
+   `--help` funciona sem Tkinter/display. Falta de Tkinter ou display vira
+   mensagem amigável e exit code 1.
+4. **Thread + fila.** Operações de rede rodam em uma thread de trabalho e
+   devolvem o resultado à thread principal por `queue.Queue`, mantendo o Tkinter
+   responsivo e sem chamadas de UI fora da thread principal.
+5. **Monitor contínuo continua na CLI.** A janela executa um ciclo (`--once`) e
+   exibe a última execução registrada; `--daemon`/`--stop` seguem no terminal.
+6. **Testes headless.** A lógica é testada sem importar Tkinter e o contrato do
+   comando é testado sem abrir janela, inclusive em ambientes sem display.
+7. **Confiança não vira veredito.** A UI mostra `score`, `analysis_confidence` e
+   a faixa observável separadamente; nada é apresentado como acusação de fraude.
 
 ### Dados de demonstração
 
